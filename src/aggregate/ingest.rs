@@ -138,3 +138,78 @@ pub(crate) fn aggregate_into_counts(
 
     Ok((counts, stats))
 }
+
+/// Non-PyO3 sibling of [`aggregate_into_counts`]: pulls strings from a
+/// pure-Rust iterator instead of a Python iterator. Used by the CLI.
+///
+/// `progress` (if `Some`) is called once per `buffer_size`-sized batch
+/// with the running stats so callers can update progress bars.
+pub fn aggregate_into_counts_rust<I>(
+    iter: I,
+    buffer_size: usize,
+    pre: &dyn PreTokenizer,
+    specials: &SpecialTokenRegistry,
+    mut progress: Option<&mut dyn FnMut(&IngestStats)>,
+) -> (AHashMap<CompactString, i64>, IngestStats)
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut counts: AHashMap<CompactString, i64> = AHashMap::new();
+    let mut buf: Vec<String> = Vec::with_capacity(buffer_size);
+    let mut stats = IngestStats::default();
+    let mut iter = iter.into_iter();
+
+    loop {
+        buf.clear();
+        for _ in 0..buffer_size {
+            match iter.next() {
+                Some(s) => buf.push(s),
+                None => break,
+            }
+        }
+        if buf.is_empty() {
+            break;
+        }
+
+        stats.total_sequences += buf.len() as u64;
+        for s in &buf {
+            stats.total_bytes_processed += s.len() as u64;
+        }
+
+        let (local, local_total): (AHashMap<CompactString, i64>, u64) = buf
+            .par_iter()
+            .map(|s| {
+                let mut m: AHashMap<CompactString, i64> = AHashMap::new();
+                let mut total: u64 = 0;
+                for seg in specials.split(s) {
+                    if let Segment::Text(text) = seg {
+                        for piece in pre.pre_tokenize(text) {
+                            *m.entry(CompactString::from(piece)).or_default() += 1;
+                            total += 1;
+                        }
+                    }
+                }
+                (m, total)
+            })
+            .reduce(
+                || (AHashMap::new(), 0u64),
+                |(mut a, ta), (b, tb)| {
+                    for (k, v) in b {
+                        *a.entry(k).or_default() += v;
+                    }
+                    (a, ta + tb)
+                },
+            );
+
+        for (k, v) in local {
+            *counts.entry(k).or_default() += v;
+        }
+        stats.total_chunks_with_multiplicity += local_total;
+
+        if let Some(cb) = progress.as_deref_mut() {
+            cb(&stats);
+        }
+    }
+
+    (counts, stats)
+}

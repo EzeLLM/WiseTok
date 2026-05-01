@@ -7,6 +7,7 @@
 //! export, phase separation, validation suite, CLI) on top.
 
 pub mod aggregate;
+pub mod cli_core;
 pub mod export;
 pub(crate) mod merge;
 pub mod pretokenizer;

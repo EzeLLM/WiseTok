@@ -4,7 +4,7 @@ pub(crate) mod word;
 
 pub use bpe::MergeMode;
 
-pub(crate) use bpe::{resolve_mode, train_core};
+pub(crate) use bpe::{resolve_mode, train_core, train_core_with_progress};
 pub(crate) use word::Word;
 
 #[cfg(test)]

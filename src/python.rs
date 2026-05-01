@@ -10,11 +10,11 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 
 use crate::aggregate::{aggregate_into_counts, file as agg_file, AggregateFile};
-use crate::merge::{resolve_mode, train_core, MergeMode, Word};
-use crate::pretokenizer::{DigitSplitter, PreTokenizer, RegexPreTokenizer, SequencePreTokenizer};
+use crate::cli_core::{materialize_and_train, parse_merge_mode, parse_pretokenizer_spec};
+use crate::pretokenizer::{PreTokenizer, RegexPreTokenizer};
 use crate::ram::{parse_size, RamMonitor};
 use crate::special_tokens::{Segment, SpecialTokenRegistry};
-use crate::{Pair, GPT4_PATTERN};
+use crate::Pair;
 
 /// Start a [`RamMonitor`] if `monitor_ram` is true. Parses `ram_warn_at`
 /// for the warn threshold; returns `None` if monitoring is disabled.
@@ -42,122 +42,24 @@ fn maybe_start_monitor(
     )))
 }
 
-/// Build a `Box<dyn PreTokenizer>` from a spec string.
-///
-/// Recognized specs (returned pipeline noted alongside):
-///   - `"gpt4"`               → `RegexPreTokenizer(GPT4_PATTERN)`
-///   - `"gpt4+digits"`        → `Sequence([Regex(GPT4), DigitSplitter])`
-///   - `"regex:<pattern>"`    → `RegexPreTokenizer(<pattern>)`
-///   - `"regex+digits:<...>"` → `Sequence([Regex(<...>), DigitSplitter])`
-///
-/// Returns `(pipeline, pattern, spec_canonical)`:
-///   - `pipeline` is the runtime pre-tokenizer.
-///   - `pattern` is the underlying regex (without the `+digits` step).
-///     This is what gets stored in `Tokenizer.pattern` and emitted to HF
-///     export — the digit-split step is recorded separately in the HF
-///     export's pre_tokenizer Sequence.
-///   - `spec_canonical` is the canonical spec string suitable for round-
-///     tripping through an `.agg` file: e.g. always `"gpt4+digits"` (not
-///     `"regex+digits:..."`) when the input was `"gpt4+digits"`.
-fn parse_pretokenizer_spec(spec: &str) -> PyResult<(Box<dyn PreTokenizer>, String, String)> {
-    if spec == "gpt4" {
-        let pre = RegexPreTokenizer::new(GPT4_PATTERN).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid GPT4_PATTERN: {}", e))
-        })?;
-        return Ok((Box::new(pre), GPT4_PATTERN.to_string(), "gpt4".to_string()));
-    }
-    if spec == "gpt4+digits" {
-        let regex_pre = RegexPreTokenizer::new(GPT4_PATTERN).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid GPT4_PATTERN: {}", e))
-        })?;
-        let seq = SequencePreTokenizer::new(vec![Box::new(regex_pre), Box::new(DigitSplitter)]);
-        return Ok((
-            Box::new(seq),
-            GPT4_PATTERN.to_string(),
-            "gpt4+digits".to_string(),
-        ));
-    }
-    if let Some(pat) = spec.strip_prefix("regex:") {
-        let pre = RegexPreTokenizer::new(pat).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid regex {:?}: {}", pat, e))
-        })?;
-        return Ok((Box::new(pre), pat.to_string(), format!("regex:{}", pat)));
-    }
-    if let Some(pat) = spec.strip_prefix("regex+digits:") {
-        let regex_pre = RegexPreTokenizer::new(pat).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid regex {:?}: {}", pat, e))
-        })?;
-        let seq = SequencePreTokenizer::new(vec![Box::new(regex_pre), Box::new(DigitSplitter)]);
-        return Ok((
-            Box::new(seq),
-            pat.to_string(),
-            format!("regex+digits:{}", pat),
-        ));
-    }
-    Err(pyo3::exceptions::PyValueError::new_err(format!(
-        "unknown pre_tokenizer spec {:?}; supported: \"gpt4\", \"gpt4+digits\", \"regex:<pat>\", \"regex+digits:<pat>\"",
-        spec
-    )))
+// `parse_pretokenizer_spec` and `materialize_and_train` are defined in
+// `crate::cli_core` and reused by both the Python bindings here and the
+// CLI binary in `src/bin/wisetok.rs`. Wrapping helpers to translate
+// `String` errors into `PyResult` are below.
+
+fn py_parse_pretokenizer_spec(spec: &str) -> PyResult<(Box<dyn PreTokenizer>, String, String)> {
+    parse_pretokenizer_spec(spec).map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// Build words / counts vectors from an iterator of `(chunk_bytes, count)`,
-/// applying `min_frequency`, then run the merge loop into `merges`.
-///
-/// Shared by `train_from_iterator` (which feeds in counts straight from the
-/// streaming aggregator) and `train_from_aggregate` (which feeds in counts
-/// from a `.agg` file). Centralizing this guarantees byte-identical merge
-/// tables across the two paths on the same input.
-fn materialize_and_train(
+fn py_materialize_and_train(
     chunks: impl IntoIterator<Item = (Vec<u8>, i64)>,
     min_frequency: i64,
     vocab_size: u32,
     merge_mode: Option<&str>,
     merges_out: &mut StdHashMap<Pair, u32>,
 ) -> PyResult<()> {
-    let mut total_unique = 0usize;
-    let mut words: Vec<Word> = Vec::new();
-    let mut cvec: Vec<i64> = Vec::new();
-    for (chunk_bytes, c) in chunks {
-        total_unique += 1;
-        if c < min_frequency {
-            continue;
-        }
-        words.push(Word::new(chunk_bytes.iter().map(|&b| b as u32).collect()));
-        cvec.push(c);
-    }
-    if min_frequency > 1 {
-        log::info!(
-            "min_frequency={} filtered {} → {} unique chunks",
-            min_frequency,
-            total_unique,
-            words.len()
-        );
-    }
-
-    // Resolve merge mode. Default `Auto`. Strings are case-insensitive.
-    let mode = match merge_mode {
-        None => MergeMode::Auto,
-        Some(s) => match s.to_ascii_lowercase().as_str() {
-            "full" => MergeMode::Full,
-            "scan" => MergeMode::Scan,
-            "auto" => MergeMode::Auto,
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown merge_mode {:?}; supported: \"full\", \"scan\", \"auto\"",
-                    other
-                )));
-            }
-        },
-    };
-    let resolved = resolve_mode(mode, words.len());
-    log::info!(
-        "merge_mode = {:?} (resolved from {:?}, unique_words = {})",
-        resolved,
-        mode,
-        words.len()
-    );
-
-    train_core(&mut words, &cvec, vocab_size, merges_out, resolved);
+    let mode = parse_merge_mode(merge_mode).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    materialize_and_train(chunks, min_frequency, vocab_size, mode, merges_out);
     Ok(())
 }
 
@@ -273,7 +175,7 @@ impl Tokenizer {
         }
         let (pre, pattern_str, _spec_canonical): (Box<dyn PreTokenizer>, String, String) =
             if let Some(spec) = pre_tokenizer {
-                parse_pretokenizer_spec(&spec)?
+                py_parse_pretokenizer_spec(&spec)?
             } else if let Some(pat) = pattern {
                 let r = RegexPreTokenizer::new(&pat).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("invalid regex pattern: {}", e))
@@ -282,7 +184,7 @@ impl Tokenizer {
                 (Box::new(r), pat, canonical)
             } else {
                 // Default: GPT-4 regex only (matches upstream rustbpe).
-                parse_pretokenizer_spec("gpt4")?
+                py_parse_pretokenizer_spec("gpt4")?
             };
 
         // Store the canonical pattern + a fallback compiled regex for the
@@ -310,7 +212,7 @@ impl Tokenizer {
             aggregate_into_counts(py, iterator, buffer_size, pre.as_ref(), &self.specials)?;
 
         // Materialize + train.
-        materialize_and_train(
+        py_materialize_and_train(
             counts.into_iter().map(|(s, c)| (s.as_bytes().to_vec(), c)),
             min_frequency,
             vocab_size,
@@ -375,7 +277,7 @@ impl Tokenizer {
         }
         let (pre, pattern_str, spec_canonical): (Box<dyn PreTokenizer>, String, String) =
             if let Some(spec) = pre_tokenizer {
-                parse_pretokenizer_spec(&spec)?
+                py_parse_pretokenizer_spec(&spec)?
             } else if let Some(pat) = pattern {
                 let r = RegexPreTokenizer::new(&pat).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("invalid regex pattern: {}", e))
@@ -383,7 +285,7 @@ impl Tokenizer {
                 let canonical = format!("regex:{}", pat);
                 (Box::new(r), pat, canonical)
             } else {
-                parse_pretokenizer_spec("gpt4")?
+                py_parse_pretokenizer_spec("gpt4")?
             };
 
         self.pattern = pattern_str.clone();
@@ -486,7 +388,7 @@ impl Tokenizer {
         );
 
         // Reconstruct the pre-tokenizer pipeline from the canonical spec.
-        let (pre, pattern_str, _) = parse_pretokenizer_spec(&agg.pre_tokenizer_config)?;
+        let (pre, pattern_str, _) = py_parse_pretokenizer_spec(&agg.pre_tokenizer_config)?;
         self.pattern = pattern_str.clone();
         self.compiled_pattern = Regex::new(&pattern_str).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
@@ -502,7 +404,7 @@ impl Tokenizer {
 
         // Materialize + train. Drop the file's `chunks` to free memory
         // before the merge loop builds its own structures.
-        materialize_and_train(
+        py_materialize_and_train(
             agg.chunks.into_iter(),
             min_frequency,
             vocab_size,

@@ -27,7 +27,8 @@
 //! bincode error.
 
 pub mod file;
-pub(crate) mod ingest;
+pub mod ingest;
 
 pub use file::{AggregateError, AggregateFile, AGG_MAGIC, AGG_VERSION};
 pub(crate) use ingest::aggregate_into_counts;
+pub use ingest::{aggregate_into_counts_rust, IngestStats};

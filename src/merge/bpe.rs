@@ -1,4 +1,5 @@
 use std::collections::HashMap as StdHashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use ahash::{AHashMap, AHashSet};
 use dary_heap::OctonaryHeap;
@@ -125,27 +126,52 @@ pub(crate) fn train_core(
     merges: &mut StdHashMap<Pair, u32>,
     mode: MergeMode,
 ) {
+    train_core_with_progress(words, counts, vocab_size, merges, mode, None)
+}
+
+/// Variant of [`train_core`] that publishes progress to an external
+/// `AtomicU32` counter. The counter is incremented to `merges_done`
+/// after each merge; callers can poll it from another thread to drive
+/// a progress bar without touching the hot loop.
+pub(crate) fn train_core_with_progress(
+    words: &mut [Word],
+    counts: &[i64],
+    vocab_size: u32,
+    merges: &mut StdHashMap<Pair, u32>,
+    mode: MergeMode,
+    progress: Option<&AtomicU32>,
+) {
     debug_assert!(
         !matches!(mode, MergeMode::Auto),
         "MergeMode::Auto must be resolved before train_core"
     );
     match mode {
         MergeMode::Full | MergeMode::Auto => {
-            train_core_incremental(words, counts, vocab_size, merges)
+            train_core_incremental_inner(words, counts, vocab_size, merges, progress)
         }
-        MergeMode::Scan => train_core_scan(words, counts, vocab_size, merges),
+        MergeMode::Scan => train_core_scan_inner(words, counts, vocab_size, merges, progress),
     }
 }
 
-/// Run the incremental BPE merge loop (Full mode).
-/// `words`: one entry per unique chunk (Vec<u32> of token-ids/bytes).
-/// `counts`: same length as `words`, count per chunk.
-/// `merges`: output map, populated with `(pair, new_id)` entries.
+/// Run the incremental BPE merge loop (Full mode). Test-only thin wrapper
+/// over [`train_core_incremental_inner`] with no progress reporting.
+#[cfg(test)]
 pub(crate) fn train_core_incremental(
     words: &mut [Word],
     counts: &[i64],
     vocab_size: u32,
     merges: &mut StdHashMap<Pair, u32>,
+) {
+    train_core_incremental_inner(words, counts, vocab_size, merges, None)
+}
+
+/// Inner implementation of the Full-mode merge loop.
+fn train_core_incremental_inner(
+    words: &mut [Word],
+    counts: &[i64],
+    vocab_size: u32,
+    merges: &mut StdHashMap<Pair, u32>,
+    progress: Option<&AtomicU32>,
 ) {
     assert!(vocab_size >= 256, "vocab_size must be at least 256");
     let num_merges = vocab_size - 256;
@@ -234,6 +260,9 @@ pub(crate) fn train_core_incremental(
         }
 
         merges_done += 1;
+        if let Some(p) = progress {
+            p.store(merges_done, Ordering::Relaxed);
+        }
 
         let current_percent = (merges_done * 100) / num_merges;
         if current_percent > last_log_percent {
@@ -253,7 +282,18 @@ pub(crate) fn train_core_incremental(
     log::info!("Finished training: {} merges completed", merges_done);
 }
 
-/// Run the scan-based BPE merge loop (Scan mode).
+/// Run the scan-based BPE merge loop (Scan mode). Test-only thin wrapper.
+#[cfg(test)]
+pub(crate) fn train_core_scan(
+    words: &mut [Word],
+    counts: &[i64],
+    vocab_size: u32,
+    merges: &mut StdHashMap<Pair, u32>,
+) {
+    train_core_scan_inner(words, counts, vocab_size, merges, None)
+}
+
+/// Inner implementation of the Scan-mode merge loop.
 ///
 /// Memory model: drops `where_to_update` and the per-heap-entry position
 /// sets entirely. Each iteration, after the lazy-refresh check confirms the
@@ -262,7 +302,7 @@ pub(crate) fn train_core_incremental(
 /// `words` + `counts` + `pair_counts` + a thin heap of `(pair, count)` —
 /// no O(N × L) inverted index.
 ///
-/// **Correctness:** identical to `train_core_incremental` because:
+/// **Correctness:** identical to the Full-mode loop because:
 /// 1. Initial `pair_counts` is computed by an equivalent parallel reduce.
 /// 2. Heap ordering ([`ScanJob`] vs [`MergeJob`]) uses the same Ord
 ///    (max by count, tie-break ascending pair).
@@ -273,11 +313,12 @@ pub(crate) fn train_core_incremental(
 ///    same way.
 /// 5. New heap entries are pushed for newly-created pairs (delta > 0)
 ///    only — same condition as Full mode.
-pub(crate) fn train_core_scan(
+fn train_core_scan_inner(
     words: &mut [Word],
     counts: &[i64],
     vocab_size: u32,
     merges: &mut StdHashMap<Pair, u32>,
+    progress: Option<&AtomicU32>,
 ) {
     assert!(vocab_size >= 256, "vocab_size must be at least 256");
     let num_merges = vocab_size - 256;
@@ -397,6 +438,9 @@ pub(crate) fn train_core_scan(
         }
 
         merges_done += 1;
+        if let Some(p) = progress {
+            p.store(merges_done, Ordering::Relaxed);
+        }
 
         let current_percent = (merges_done * 100) / num_merges;
         if current_percent > last_log_percent {
