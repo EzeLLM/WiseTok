@@ -1,8 +1,8 @@
 [package]
-name = "rustbpe"
+name = "wisetok"
 version = "0.1.0"
 edition = "2021"
-description = "A BPE (Byte Pair Encoding) tokenizer written in Rust with Python bindings"
+description = "Production BPE tokenizer trainer with Python bindings (fork of karpathy/rustbpe)"
 license = "MIT"
 readme = "README.md"
 

@@ -557,21 +557,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
-name = "rustbpe"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "compact_str",
- "criterion",
- "dary_heap",
- "fancy-regex",
- "log",
- "pyo3",
- "pyo3-log",
- "rayon",
-]
-
-[[package]]
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -782,6 +767,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
+]
+
+[[package]]
+name = "wisetok"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "compact_str",
+ "criterion",
+ "dary_heap",
+ "fancy-regex",
+ "log",
+ "pyo3",
+ "pyo3-log",
+ "rayon",
 ]
 
 [[package]]

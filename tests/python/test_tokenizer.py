@@ -4,17 +4,17 @@ Comparing the training of:
 1. (very slow) Python reference implementation
 2. Optimized Python implementation
 3. HuggingFace tokenizers training implementation
-4. Our own custom RustBPE training implementation
+4. Our own wisetok training implementation (forked from rustbpe)
 
 All of these should calculate the same merges and produce
 the same vocabulary and tokenizations.
 
 Finally, for inference we will use tiktoken for efficiency.
-So we want to make sure we can export our rustbpe tokenizer
+So we want to make sure we can export our wisetok tokenizer
 into tiktoken and use it for inference with identical results.
 
 Run with:
-python -m pytest tests/test_rustbpe.py -v -s
+python -m pytest tests/python/test_tokenizer.py -v -s
 -v is verbose, -s is show prints
 """
 
@@ -22,7 +22,7 @@ import regex as re
 from collections import Counter, defaultdict
 import time
 import warnings
-import rustbpe
+import wisetok
 import tiktoken
 import pytest
 
@@ -430,7 +430,7 @@ def get_cache_dir():
     """Get user's cache directory (persists across test runs)."""
     import os
     cache_home = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
-    cache_dir = os.path.join(cache_home, "rustbpe")
+    cache_dir = os.path.join(cache_home, "wisetok")
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 
@@ -539,24 +539,24 @@ def test_correctness(enwik8_small):
     print("✅ HuggingFace == Fast")
 
     # Finally use our own Rust implementation
-    print("\nTraining rustbpe...")
-    rustbpe_tokenizer = rustbpe.Tokenizer()
-    _, rustbpe_train_time = time_function(rustbpe_tokenizer.train_from_iterator, [text], vocab_size)
-    rustbpe_ids, rustbpe_encode_time = time_function(rustbpe_tokenizer.encode, encode_text)
-    print(f"RustBPE train time: {rustbpe_train_time:.4f}s")
-    print(f"RustBPE encode time: {rustbpe_encode_time:.4f}s")
-    print(rustbpe_ids[:20])
+    print("\nTraining wisetok...")
+    wisetok_tokenizer = wisetok.Tokenizer()
+    _, wisetok_train_time = time_function(wisetok_tokenizer.train_from_iterator, [text], vocab_size)
+    wisetok_ids, wisetok_encode_time = time_function(wisetok_tokenizer.encode, encode_text)
+    print(f"wisetok train time: {wisetok_train_time:.4f}s")
+    print(f"wisetok encode time: {wisetok_encode_time:.4f}s")
+    print(wisetok_ids[:20])
 
-    assert rustbpe_ids == fast_reference_ids, "RustBPE should match fast reference"
-    print("✅ RustBPE == Fast")
+    assert wisetok_ids == fast_reference_ids, "wisetok should match fast reference"
+    print("✅ wisetok == Fast")
 
-    # Now export rustbpe to tiktoken for more efficient inference
+    # Now export wisetok to tiktoken for more efficient inference
     print("\nTesting tiktoken export...")
-    pattern = rustbpe_tokenizer.get_pattern()
-    mergeable_ranks_list = rustbpe_tokenizer.get_mergeable_ranks()
+    pattern = wisetok_tokenizer.get_pattern()
+    mergeable_ranks_list = wisetok_tokenizer.get_mergeable_ranks()
     mergeable_ranks = {bytes(k): v for k, v in mergeable_ranks_list}
     enc = tiktoken.Encoding(
-        name="rustbpe",
+        name="wisetok",
         pat_str=pattern,
         mergeable_ranks=mergeable_ranks,
         special_tokens={},
@@ -565,8 +565,8 @@ def test_correctness(enwik8_small):
     print(f"Tiktoken encode time: {tiktoken_encode_time:.4f}s")
     print(tiktoken_ids[:20])
 
-    assert tiktoken_ids == rustbpe_ids, "Tiktoken should match RustBPE"
-    print("✅ Tiktoken == RustBPE")
+    assert tiktoken_ids == wisetok_ids, "Tiktoken should match wisetok"
+    print("✅ Tiktoken == wisetok")
 
 
 @pytest.mark.slow
@@ -583,12 +583,12 @@ def test_training_performance(enwik8_large):
     # _, optimized_python_train_time = time_function(optimized_python_tokenizer.train, text, vocab_size)
     # print(f"Optimized python train time: {optimized_python_train_time:.4f}s")
 
-    # Train rustbpe
-    print("\nTraining rustbpe...")
-    rustbpe_tokenizer = rustbpe.Tokenizer()
-    _, rustbpe_train_time = time_function(rustbpe_tokenizer.train_from_iterator, [text], vocab_size)
-    print(f"RustBPE train time: {rustbpe_train_time:.4f}s")
-    assert rustbpe_train_time > 0, "Training should take some time"
+    # Train wisetok
+    print("\nTraining wisetok...")
+    wisetok_tokenizer = wisetok.Tokenizer()
+    _, wisetok_train_time = time_function(wisetok_tokenizer.train_from_iterator, [text], vocab_size)
+    print(f"wisetok train time: {wisetok_train_time:.4f}s")
+    assert wisetok_train_time > 0, "Training should take some time"
 
     # Train HuggingFace
     print("\nTraining HuggingFace...")
@@ -598,16 +598,16 @@ def test_training_performance(enwik8_large):
 
     # Print comparison
     print(f"\n📊 Performance comparison:")
-    print(f"   RustBPE: {rustbpe_train_time:.4f}s")
+    print(f"   wisetok: {wisetok_train_time:.4f}s")
     print(f"   HuggingFace: {hf_train_time:.4f}s")
-    print(f"   Speedup: {hf_train_time/rustbpe_train_time:.2f}x")
+    print(f"   Speedup: {hf_train_time/wisetok_train_time:.2f}x")
 
 def test_batch_encode_correctness(enwik8_small):
     """Quick correctness test for batch_encode()"""
     text = enwik8_small
     vocab_size = 512
 
-    tokenizer = rustbpe.Tokenizer()
+    tokenizer = wisetok.Tokenizer()
     tokenizer.train_from_iterator([text], vocab_size)
 
     # Test with various batch sizes and edge cases
@@ -629,7 +629,7 @@ def test_batch_encode_correctness(enwik8_small):
 
 def test_vocab_size():
     """Test the vocab_size property."""
-    tokenizer = rustbpe.Tokenizer()
+    tokenizer = wisetok.Tokenizer()
 
     # New tokenizer should have 256 (byte-level tokens)
     assert tokenizer.vocab_size == 256, "New tokenizer should have vocab_size=256"
@@ -646,7 +646,7 @@ def test_decode_roundtrip(enwik8_small):
     text = enwik8_small[:1000]  # Use first 1KB for quick test
     vocab_size = 512
 
-    tokenizer = rustbpe.Tokenizer()
+    tokenizer = wisetok.Tokenizer()
     tokenizer.train_from_iterator([text], vocab_size)
 
     # Test various strings
@@ -674,7 +674,7 @@ def test_decode_roundtrip(enwik8_small):
 
 def test_decode_invalid_token():
     """Test that decode raises an error for invalid token IDs."""
-    tokenizer = rustbpe.Tokenizer()
+    tokenizer = wisetok.Tokenizer()
 
     # Token 300 doesn't exist in base vocabulary (only 0-255)
     try:
@@ -698,7 +698,7 @@ def test_batch_encode_performance(enwik8_large):
 
     # Train tokenizer
     print("\nTraining tokenizer...")
-    tokenizer = rustbpe.Tokenizer()
+    tokenizer = wisetok.Tokenizer()
     tokenizer.train_from_iterator([text], vocab_size)
 
     # Create test batch: split text into chunks
