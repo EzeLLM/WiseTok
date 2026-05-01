@@ -106,6 +106,85 @@ impl SpecialTokenRegistry {
             .map(|(i, t)| (t.clone(), base + i as u32))
             .collect()
     }
+
+    /// Split `text` into segments alternating between text runs (regions
+    /// that BPE will process) and special tokens (atoms that never enter
+    /// BPE). Specials are matched as exact substrings; when two specials
+    /// could match at the same position, the longer one wins.
+    ///
+    /// Empty text runs (e.g. a special at the very start, or two specials
+    /// adjacent to each other) are not emitted.
+    ///
+    /// The returned `Segment::Special` slices borrow from the registry
+    /// (`self.tokens`); `Segment::Text` slices borrow from `text`. Both
+    /// share the lifetime `'a`, so callers must keep both alive for the
+    /// duration of the segment usage.
+    pub fn split<'a>(&'a self, text: &'a str) -> Vec<Segment<'a>> {
+        if self.tokens.is_empty() || text.is_empty() {
+            if text.is_empty() {
+                return Vec::new();
+            }
+            return vec![Segment::Text(text)];
+        }
+
+        // Sort by descending length so the longest match wins on overlap.
+        let mut sorted: Vec<&str> = self.tokens.iter().map(|s| s.as_str()).collect();
+        sorted.sort_by_key(|s| std::cmp::Reverse(s.len()));
+
+        let bytes = text.as_bytes();
+        let mut out = Vec::new();
+        let mut cursor = 0usize;
+
+        while cursor < text.len() {
+            let mut matched: Option<(usize, &str)> = None;
+            // Try each special token in length-descending order at cursor.
+            for special in &sorted {
+                let sb = special.as_bytes();
+                if cursor + sb.len() <= text.len() && &bytes[cursor..cursor + sb.len()] == sb {
+                    matched = Some((sb.len(), special));
+                    break;
+                }
+            }
+            if let Some((len, special)) = matched {
+                out.push(Segment::Special(special));
+                cursor += len;
+            } else {
+                // Find the next position where any special could start. We
+                // walk forward by one byte at a time looking for the first
+                // candidate; this is O(n × |specials|) in the worst case
+                // but fine for small registries (typical: < 50 specials).
+                let start = cursor;
+                cursor += 1;
+                while cursor < text.len() {
+                    if !text.is_char_boundary(cursor) {
+                        cursor += 1;
+                        continue;
+                    }
+                    let any_match = sorted.iter().any(|special| {
+                        let sb = special.as_bytes();
+                        cursor + sb.len() <= text.len() && &bytes[cursor..cursor + sb.len()] == sb
+                    });
+                    if any_match {
+                        break;
+                    }
+                    cursor += 1;
+                }
+                // [start..cursor) is a run of plain text.
+                out.push(Segment::Text(&text[start..cursor]));
+            }
+        }
+
+        out
+    }
+}
+
+/// A piece of input text classified as either a literal text run (which
+/// will go through the pre-tokenizer + BPE) or a registered special token
+/// (which is emitted as a single ID and never split).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Segment<'a> {
+    Text(&'a str),
+    Special(&'a str),
 }
 
 /// Errors when adding to a [`SpecialTokenRegistry`].

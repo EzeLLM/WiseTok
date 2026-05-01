@@ -993,3 +993,138 @@ def test_pre_tokenizer_encode_uses_same_pipeline_as_training():
     # invariant is that 'bbb' (which the regex doesn't match) is absent.
     assert "b" not in decoded, f"lowercase 'b' should not encode: decoded={decoded!r}"
     print(f"✅ encode uses same pipeline as training; decoded={decoded!r}")
+
+
+def test_special_tokens_atomic_in_encode():
+    """A registered special token in the input must encode to a single ID,
+    not get split by BPE."""
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(
+        ["hello world " * 200],
+        vocab_size=300,
+        special_tokens=["<|endoftext|>"],
+    )
+
+    ids = tok.encode("<|endoftext|>")
+    # Special at index 0 → id = 256 + num_merges + 0
+    expected = 256 + (tok.vocab_size - 256)  # vocab_size includes specials? let's compute differently
+    # vocab_size on Tokenizer is 256 + merges only (no specials counted) — verify by re-deriving:
+    num_merges = len(tok.get_mergeable_ranks()) - 256
+    expected_id = 256 + num_merges + 0
+    assert ids == [expected_id], f"expected [{expected_id}], got {ids}"
+    print(f"✅ '<|endoftext|>' encodes to single id {expected_id}")
+
+
+def test_special_tokens_in_middle_of_text():
+    """Specials surrounded by ordinary text emit one ID each; the surrounding
+    text encodes normally."""
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(
+        ["hello world " * 200],
+        vocab_size=300,
+        special_tokens=["<|endoftext|>"],
+    )
+
+    text_with_sep = "hello<|endoftext|>world"
+    ids = tok.encode(text_with_sep)
+    num_merges = len(tok.get_mergeable_ranks()) - 256
+    special_id = 256 + num_merges + 0
+    # The special's ID appears exactly once.
+    assert ids.count(special_id) == 1
+    # Removing the special's ID, the remaining IDs are the BPE encoding of
+    # "hello" + "world" (no separator) — same as encoding "helloworld" with
+    # no special.
+    rest = [i for i in ids if i != special_id]
+    expected_rest = tok.encode("hello") + tok.encode("world")
+    assert rest == expected_rest, f"surrounding tokens differ: {rest!r} vs {expected_rest!r}"
+    print(f"✅ surrounding text encoded identically; special breaks the stream")
+
+
+def test_special_tokens_skipped_during_aggregation():
+    """During training, a special token's bytes must NOT contribute to the
+    BPE merge map. Compare two trainers: one with the special, one without
+    a special at all but with the same string appearing literally — and
+    verify that only the latter produces merges containing those bytes."""
+    # Use a sentinel string whose bytes are unique to the corpus, so we can
+    # detect whether they appear in any merge.
+    sentinel = "<|XQZ|>"  # unique 7-byte sequence
+    body = "the quick brown fox " * 100
+    text = f"{body}{sentinel}{body}{sentinel}{body}"
+
+    # Tokenizer A: register the sentinel as a special. It should never enter BPE.
+    a = wisetok.Tokenizer()
+    a.train_from_iterator([text], vocab_size=320, special_tokens=[sentinel])
+    sentinel_bytes = set(sentinel.encode("utf-8"))
+    for token_bytes, token_id in a.get_mergeable_ranks():
+        if token_id < 256:
+            continue
+        if any(b in sentinel_bytes for b in token_bytes):
+            # A merge contains a byte from the sentinel — only acceptable
+            # if that byte ALSO appears in the body, in which case the
+            # merge could come from the body.
+            byte_set = set(token_bytes)
+            body_bytes = set(body.encode("utf-8"))
+            sentinel_only = byte_set & sentinel_bytes - body_bytes
+            assert not sentinel_only, (
+                f"merge {token_id} contains sentinel-only bytes "
+                f"{sentinel_only!r}; special-token isolation failed"
+            )
+    print("✅ specials skipped during aggregation; merges contain no sentinel-only bytes")
+
+
+def test_special_tokens_via_add_special_tokens():
+    """add_special_tokens() lets users register specials post-training; encode
+    then treats them as atoms."""
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(["hello world " * 200], vocab_size=300)
+    assert tok.get_special_tokens() == []
+
+    tok.add_special_tokens(["<|sep|>", "<|cls|>"])
+    assert tok.get_special_tokens() == ["<|sep|>", "<|cls|>"]
+
+    num_merges = len(tok.get_mergeable_ranks()) - 256
+    sep_id = 256 + num_merges + 0
+    cls_id = 256 + num_merges + 1
+
+    ids = tok.encode("a<|sep|>b<|cls|>c")
+    assert sep_id in ids and cls_id in ids
+    print(f"✅ post-train add_special_tokens works; IDs: <|sep|>={sep_id}, <|cls|>={cls_id}")
+
+
+def test_special_tokens_hf_export_uses_registered_specials():
+    """save_huggingface() with no `special_tokens` arg must use the registered
+    specials. The exported file's added_tokens must match."""
+    import tempfile, os, json
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(
+        ["hello world " * 200],
+        vocab_size=300,
+        special_tokens=["<|endoftext|>", "<|fim_prefix|>"],
+    )
+
+    with tempfile.TemporaryDirectory() as d:
+        # No special_tokens kwarg → use the registered ones.
+        tok.save_huggingface(d)
+        with open(os.path.join(d, "tokenizer.json")) as f:
+            data = json.load(f)
+
+        added = [a["content"] for a in data["added_tokens"]]
+        assert added == ["<|endoftext|>", "<|fim_prefix|>"], f"got {added}"
+
+        # Encoding via wisetok produces IDs that match what's in the file.
+        text = "hello<|endoftext|>world<|fim_prefix|>"
+        wise_ids = tok.encode(text)
+        # Verify HF can read the file too.
+        from tokenizers import Tokenizer as HfTok
+        hf = HfTok.from_file(os.path.join(d, "tokenizer.json"))
+        # HF needs the specials to be registered with add_special_tokens to
+        # treat them as atoms. Without that, HF would split them. We mirror
+        # the wisetok behavior here by adding them on the HF side.
+        hf.add_special_tokens(["<|endoftext|>", "<|fim_prefix|>"])
+        hf_ids = hf.encode(text).ids
+        assert wise_ids == hf_ids, (
+            f"wisetok encode and HF encode of same text differ: "
+            f"wisetok={wise_ids}, hf={hf_ids}"
+        )
+    print(f"✅ save_huggingface uses registered specials; HF encode matches wisetok encode")

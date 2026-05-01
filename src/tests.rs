@@ -9,6 +9,7 @@ use fancy_regex::Regex;
 
 use crate::export::tiktoken::mergeable_ranks;
 use crate::merge::{count_pairs_parallel, train_core_incremental, MergeJob, Word};
+use crate::special_tokens::SpecialTokenRegistry;
 use crate::{Pair, Tokenizer};
 
 #[test]
@@ -78,6 +79,7 @@ fn test_encode_with_pattern_no_merges() {
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
         pre_tokenizer: None,
+        specials: SpecialTokenRegistry::new(),
     };
     let ids = tok.encode("hi");
     // 'h' = 104, 'i' = 105
@@ -94,6 +96,7 @@ fn test_encode_with_merges() {
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
         pre_tokenizer: None,
+        specials: SpecialTokenRegistry::new(),
     };
 
     let ids = tok.encode("hi");
@@ -215,6 +218,7 @@ fn test_encode_chained_merges() {
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
         pre_tokenizer: None,
+        specials: SpecialTokenRegistry::new(),
     };
 
     let ids = tok.encode("aaa");
@@ -237,6 +241,7 @@ fn test_encode_decode_roundtrip_simple() {
         pattern: r"\w+|\s+".to_string(),
         compiled_pattern: Regex::new(r"\w+|\s+").unwrap(),
         pre_tokenizer: None,
+        specials: SpecialTokenRegistry::new(),
     };
 
     let text = "hi";
@@ -257,6 +262,7 @@ fn test_encode_decode_roundtrip_with_spaces() {
         pattern: r"\w+|\s+".to_string(),
         compiled_pattern: Regex::new(r"\w+|\s+").unwrap(),
         pre_tokenizer: None,
+        specials: SpecialTokenRegistry::new(),
     };
 
     let text = "hello world";
@@ -322,6 +328,7 @@ fn test_encode_empty_string() {
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
         pre_tokenizer: None,
+        specials: SpecialTokenRegistry::new(),
     };
 
     let ids = tok.encode("");
@@ -335,6 +342,7 @@ fn test_encode_no_matches() {
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
         pre_tokenizer: None,
+        specials: SpecialTokenRegistry::new(),
     };
 
     let ids = tok.encode("   ");

@@ -12,6 +12,7 @@ use rayon::prelude::*;
 
 use crate::merge::{train_core_incremental, Word};
 use crate::pretokenizer::{DigitSplitter, PreTokenizer, RegexPreTokenizer, SequencePreTokenizer};
+use crate::special_tokens::{Segment, SpecialTokenRegistry};
 use crate::{Pair, GPT4_PATTERN};
 
 /// Build a `Box<dyn PreTokenizer>` from a spec string.
@@ -78,6 +79,13 @@ pub struct Tokenizer {
     /// `None`, encode falls back to `compiled_pattern` (legacy path used by
     /// internal struct-literal test fixtures). Set by `train_from_iterator`.
     pub(crate) pre_tokenizer: Option<Box<dyn PreTokenizer>>,
+    /// Special tokens registered for this tokenizer. Populated by
+    /// `train_from_iterator`'s `special_tokens` argument or by
+    /// `add_special_tokens` post-training. Used by both aggregation
+    /// (skip-and-split during training) and `encode` (atomic emission of
+    /// pre-assigned IDs). IDs are assigned at HF-export / encode time as
+    /// `256 + num_merges + index_in_registry`.
+    pub(crate) specials: SpecialTokenRegistry,
 }
 
 impl Default for Tokenizer {
@@ -96,6 +104,7 @@ impl Tokenizer {
             pattern: String::new(),
             compiled_pattern: Regex::new("").expect("Empty regex should be valid"),
             pre_tokenizer: None,
+            specials: SpecialTokenRegistry::new(),
         }
     }
 
@@ -119,9 +128,9 @@ impl Tokenizer {
     /// before the merge loop runs. `min_frequency=1` keeps every chunk
     /// (legacy default; same as upstream rustbpe). Higher values shrink the
     /// word table at the cost of dropping rare chunks from training.
-    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None))]
+    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None))]
     #[pyo3(
-        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None)"
+        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None)"
     )]
     #[allow(clippy::too_many_arguments)]
     pub fn train_from_iterator(
@@ -133,6 +142,7 @@ impl Tokenizer {
         pattern: Option<String>,
         min_frequency: i64,
         pre_tokenizer: Option<String>,
+        special_tokens: Option<Vec<String>>,
     ) -> PyResult<()> {
         // Resolve the pre-tokenizer pipeline. The legacy `pattern` argument
         // and the new `pre_tokenizer` spec are mutually exclusive — let the
@@ -142,8 +152,7 @@ impl Tokenizer {
                 "pass either `pattern` (legacy) or `pre_tokenizer` (new), not both",
             ));
         }
-        let (pre, pattern_str): (Box<dyn PreTokenizer>, String) = if let Some(spec) =
-            pre_tokenizer
+        let (pre, pattern_str): (Box<dyn PreTokenizer>, String) = if let Some(spec) = pre_tokenizer
         {
             parse_pretokenizer_spec(&spec)?
         } else if let Some(pat) = pattern {
@@ -163,6 +172,17 @@ impl Tokenizer {
         self.compiled_pattern = Regex::new(&pattern_str).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
         })?;
+
+        // Register the special tokens for this run. Replace anything
+        // previously registered — re-training is destructive on `self`.
+        self.specials = SpecialTokenRegistry::new();
+        if let Some(toks) = special_tokens {
+            for t in toks {
+                self.specials.add(t).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("special token: {}", e))
+                })?;
+            }
+        }
 
         // Prepare a true Python iterator object.
         let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
@@ -220,15 +240,23 @@ impl Tokenizer {
 
             total_sequences += buf.len() as u64;
 
-            // Borrow the pre-tokenizer across rayon workers. The trait is
-            // Send + Sync, so an immutable reference is shared safely.
+            // Borrow the pre-tokenizer and special-token registry across
+            // rayon workers. Both are Send + Sync so immutable references
+            // are shared safely. Specials are split off first so they
+            // bypass BPE entirely; only Text segments feed the pre-tokenizer.
             let pre_ref: &dyn PreTokenizer = &*pre;
+            let specials_ref: &SpecialTokenRegistry = &self.specials;
             let local: AHashMap<CompactString, i64> = py.detach(|| {
                 buf.par_iter()
                     .map(|s| {
                         let mut m: AHashMap<CompactString, i64> = AHashMap::new();
-                        for piece in pre_ref.pre_tokenize(s) {
-                            *m.entry(CompactString::from(piece)).or_default() += 1;
+                        for seg in specials_ref.split(s) {
+                            if let Segment::Text(text) = seg {
+                                for piece in pre_ref.pre_tokenize(text) {
+                                    *m.entry(CompactString::from(piece)).or_default() += 1;
+                                }
+                            }
+                            // Segment::Special: skip; never enters BPE.
                         }
                         m
                     })
@@ -300,6 +328,28 @@ impl Tokenizer {
         crate::export::tiktoken::mergeable_ranks(&self.merges)
     }
 
+    /// Append special tokens to the tokenizer's registry. Specials added
+    /// after training are still atomic during `encode`; their IDs are
+    /// `256 + num_merges + index`, so the encoded IDs of newly added
+    /// specials follow whatever was registered before them (including
+    /// any that came in via `train_from_iterator(special_tokens=...)`).
+    ///
+    /// Raises `ValueError` if any token is empty, contains NUL, or is
+    /// already registered.
+    pub fn add_special_tokens(&mut self, tokens: Vec<String>) -> PyResult<()> {
+        for t in tokens {
+            self.specials.add(t).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("special token: {}", e))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Return the special tokens currently registered, in registry order.
+    pub fn get_special_tokens(&self) -> Vec<String> {
+        self.specials.tokens().to_vec()
+    }
+
     /// Save the tokenizer in HuggingFace `tokenizer.json` format.
     ///
     /// Writes `tokenizer.json` (and `tokenizer_config.json` if
@@ -307,9 +357,10 @@ impl Tokenizer {
     /// missing. After this, `transformers.AutoTokenizer.from_pretrained(
     /// output_dir)` will load the tokenizer.
     ///
-    /// `special_tokens` is an optional list of strings; if provided, they
-    /// are appended after the merges in the output ID space (IDs
-    /// 256+num_merges..). Pass an empty list (the default) to skip.
+    /// `special_tokens` is an optional override list. When `None` (the
+    /// default), the tokenizer's currently-registered specials are used —
+    /// these come from `train_from_iterator(special_tokens=...)` and
+    /// `add_special_tokens(...)`. Pass an explicit list to override.
     ///
     /// Note: the wisetok ID layout (bytes 0..255, merges 256..N, specials
     /// at the tail) differs from what HF's own BpeTrainer would emit
@@ -326,16 +377,20 @@ impl Tokenizer {
         write_config: bool,
     ) -> PyResult<()> {
         use crate::export::huggingface::{write_tokenizer_config, write_tokenizer_json};
-        use crate::special_tokens::SpecialTokenRegistry;
 
-        let mut registry = SpecialTokenRegistry::new();
-        if let Some(toks) = special_tokens {
+        let registry: SpecialTokenRegistry = if let Some(toks) = special_tokens {
+            // Explicit override — use only what the caller provided.
+            let mut r = SpecialTokenRegistry::new();
             for t in toks {
-                registry.add(t).map_err(|e| {
+                r.add(t).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("special token: {}", e))
                 })?;
             }
-        }
+            r
+        } else {
+            // No override — use whatever's already registered on `self`.
+            self.specials.clone()
+        };
 
         let dir = std::path::Path::new(output_dir);
         write_tokenizer_json(dir, &self.merges, &self.pattern, &registry).map_err(|e| {
@@ -353,26 +408,45 @@ impl Tokenizer {
     }
 
     /// Encode a string into token IDs.
+    ///
+    /// Special tokens registered via `train_from_iterator(special_tokens=...)`
+    /// or `add_special_tokens` are matched as exact substrings before BPE
+    /// applies. Each matched special emits a single pre-assigned ID
+    /// (`256 + num_merges + index_in_registry`); the surrounding text
+    /// segments go through the normal pre-tokenizer + BPE path.
     pub fn encode(&self, text: &str) -> Vec<u32> {
         let mut all_ids = Vec::new();
+        let special_base = (256 + self.merges.len()) as u32;
 
-        // Prefer the stored pre-tokenizer (set by train_from_iterator). Fall
-        // back to compiled_pattern for fixtures that construct Tokenizer via
-        // the struct literal in tests.
-        if let Some(pre) = &self.pre_tokenizer {
-            for chunk in pre.pre_tokenize(text) {
-                self.encode_chunk_into(chunk, &mut all_ids);
-            }
-        } else {
-            for m in self.compiled_pattern.find_iter(text) {
-                let chunk = match m {
-                    Ok(mat) => mat.as_str(),
-                    Err(e) => {
-                        log::warn!("Regex match error, skipping chunk: {}", e);
-                        continue;
+        for seg in self.specials.split(text) {
+            match seg {
+                Segment::Special(s) => {
+                    // Find the special's index in the registry.
+                    if let Some(idx) = self.specials.tokens().iter().position(|t| t == s) {
+                        all_ids.push(special_base + idx as u32);
                     }
-                };
-                self.encode_chunk_into(chunk, &mut all_ids);
+                }
+                Segment::Text(t) => {
+                    // Prefer the stored pre-tokenizer (set by train_from_iterator).
+                    // Fall back to compiled_pattern for fixtures that construct
+                    // Tokenizer via the struct literal in tests.
+                    if let Some(pre) = &self.pre_tokenizer {
+                        for chunk in pre.pre_tokenize(t) {
+                            self.encode_chunk_into(chunk, &mut all_ids);
+                        }
+                    } else {
+                        for m in self.compiled_pattern.find_iter(t) {
+                            let chunk = match m {
+                                Ok(mat) => mat.as_str(),
+                                Err(e) => {
+                                    log::warn!("Regex match error, skipping chunk: {}", e);
+                                    continue;
+                                }
+                            };
+                            self.encode_chunk_into(chunk, &mut all_ids);
+                        }
+                    }
+                }
             }
         }
 
