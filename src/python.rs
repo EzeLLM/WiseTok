@@ -205,6 +205,58 @@ impl Tokenizer {
         crate::export::tiktoken::mergeable_ranks(&self.merges)
     }
 
+    /// Save the tokenizer in HuggingFace `tokenizer.json` format.
+    ///
+    /// Writes `tokenizer.json` (and `tokenizer_config.json` if
+    /// `write_config=True`) into `output_dir`. Creates the directory if
+    /// missing. After this, `transformers.AutoTokenizer.from_pretrained(
+    /// output_dir)` will load the tokenizer.
+    ///
+    /// `special_tokens` is an optional list of strings; if provided, they
+    /// are appended after the merges in the output ID space (IDs
+    /// 256+num_merges..). Pass an empty list (the default) to skip.
+    ///
+    /// Note: the wisetok ID layout (bytes 0..255, merges 256..N, specials
+    /// at the tail) differs from what HF's own BpeTrainer would emit
+    /// (specials 0..S-1, then bytes, then merges). HF readers accept both;
+    /// the practical consequence is that wisetok IDs and HF IDs for the
+    /// same corpus + special tokens will not be numerically equal. See
+    /// `research/hf_export/RESEARCH_SUMMARY.md`.
+    #[pyo3(signature = (output_dir, special_tokens=None, write_config=true))]
+    #[pyo3(text_signature = "(self, output_dir, special_tokens=None, write_config=True)")]
+    pub fn save_huggingface(
+        &self,
+        output_dir: &str,
+        special_tokens: Option<Vec<String>>,
+        write_config: bool,
+    ) -> PyResult<()> {
+        use crate::export::huggingface::{write_tokenizer_config, write_tokenizer_json};
+        use crate::special_tokens::SpecialTokenRegistry;
+
+        let mut registry = SpecialTokenRegistry::new();
+        if let Some(toks) = special_tokens {
+            for t in toks {
+                registry.add(t).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("special token: {}", e))
+                })?;
+            }
+        }
+
+        let dir = std::path::Path::new(output_dir);
+        write_tokenizer_json(dir, &self.merges, &self.pattern, &registry).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("failed to write tokenizer.json: {}", e))
+        })?;
+        if write_config {
+            write_tokenizer_config(dir).map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!(
+                    "failed to write tokenizer_config.json: {}",
+                    e
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
     /// Encode a string into token IDs.
     pub fn encode(&self, text: &str) -> Vec<u32> {
         let mut all_ids = Vec::new();

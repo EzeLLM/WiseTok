@@ -818,3 +818,88 @@ def test_min_frequency_roundtrip():
     sample = "the quick brown fox"
     assert tok.decode(tok.encode(sample)) == sample
     print("✅ min_frequency tokenizer round-trips correctly")
+
+
+def test_hf_export_loads_in_tokenizers():
+    """A wisetok-exported tokenizer.json must load with HF's Tokenizer.from_file
+    and round-trip text correctly."""
+    import tempfile, os
+    from tokenizers import Tokenizer as HfTokenizer
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(["hello world " * 200], vocab_size=300)
+
+    with tempfile.TemporaryDirectory() as d:
+        tok.save_huggingface(d)
+        assert "tokenizer.json" in os.listdir(d)
+        assert "tokenizer_config.json" in os.listdir(d)
+
+        hf = HfTokenizer.from_file(os.path.join(d, "tokenizer.json"))
+        text = "hello world hello world"
+        enc = hf.encode(text)
+        assert hf.decode(enc.ids) == text
+        # Option C: wisetok IDs match the exported file's IDs.
+        assert tok.encode(text) == enc.ids
+    print("✅ HF export loads in Tokenizer.from_file and roundtrips")
+
+
+def test_hf_export_with_special_tokens():
+    """Special tokens must end up in vocab and added_tokens with the
+    correct (Option C: tail-placed) IDs."""
+    import tempfile, os, json
+    from tokenizers import Tokenizer as HfTokenizer
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(["hello world " * 200], vocab_size=300)
+    specials = ["<|endoftext|>", "<|fim_prefix|>", "<|fim_middle|>"]
+
+    with tempfile.TemporaryDirectory() as d:
+        tok.save_huggingface(d, special_tokens=specials)
+        with open(os.path.join(d, "tokenizer.json")) as f:
+            data = json.load(f)
+
+        # Specials placed at 256 + num_merges + i.
+        base = 256 + len(data["model"]["merges"])
+        for i, s in enumerate(specials):
+            assert data["model"]["vocab"][s] == base + i, (
+                f"special {s!r} expected id {base + i}, got "
+                f"{data['model']['vocab'][s]}"
+            )
+
+        # added_tokens entries align.
+        added = {a["content"]: a for a in data["added_tokens"]}
+        for i, s in enumerate(specials):
+            assert added[s]["id"] == base + i
+            assert added[s]["special"] is True
+
+        # HF can still load the file even though specials are at the tail.
+        hf = HfTokenizer.from_file(os.path.join(d, "tokenizer.json"))
+        # Using a special as-is in text should encode to the special's id.
+        enc = hf.encode("<|endoftext|>")
+        assert base in enc.ids, (
+            f"expected special id {base} in encoding of '<|endoftext|>', got {enc.ids}"
+        )
+    print("✅ HF export with specials: tail IDs verified, HF reads the file")
+
+
+def test_hf_export_roundtrip_via_pretrained_tokenizer_fast():
+    """transformers.PreTrainedTokenizerFast must accept the file."""
+    import tempfile, os
+    try:
+        from transformers import PreTrainedTokenizerFast
+    except ImportError:
+        pytest.skip("transformers not installed")
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(["the quick brown fox " * 100], vocab_size=320)
+
+    with tempfile.TemporaryDirectory() as d:
+        tok.save_huggingface(d)
+        ptf = PreTrainedTokenizerFast(tokenizer_file=os.path.join(d, "tokenizer.json"))
+        text = "the quick brown fox"
+        ids = ptf.encode(text)
+        decoded = ptf.decode(ids)
+        # ByteLevel decode strips the leading space if there is one; just
+        # check semantic round-trip.
+        assert decoded.strip() == text.strip()
+    print("✅ PreTrainedTokenizerFast loads the wisetok-exported file")

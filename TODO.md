@@ -13,11 +13,17 @@ Roadmap. Each item names a concrete goal, where it lives, and the acceptance cri
 - [x] `SpecialTokenRegistry` + `CODE_PRESET`, `CHAT_PRESET`, `add_reserved(n)`
 - [x] `min_frequency` parameter on `train_from_iterator`
 - [ ] **HuggingFace `tokenizer.json` export** (`src/export/huggingface.rs`)
-  - Generate `tokenizer.json` matching HF's BpeTrainer output exactly
-  - Generate `tokenizer_config.json`, `special_tokens_map.json`
-  - Replicate the GPT-2 byte-to-unicode table for `ByteLevel`
-  - Acceptance: `AutoTokenizer.from_pretrained("./out/")` loads, encode/decode matches `wisetok.encode`/`decode`
-  - Acceptance: diff our `tokenizer.json` against a reference produced by HF `BpeTrainer` on the same corpus and special tokens; structural fields (vocab, merges, pre_tokenizer, decoder, added_tokens) match
+  - Decision (locked): export wisetok IDs as-is. Bytes 0..255, merges 256..N, specials at N..N+S-1. HF's reader treats IDs as opaque, so `AutoTokenizer.from_pretrained` works either way. Trainer untouched. `wisetok.encode` IDs == exported file IDs. See `research/hf_export/RESEARCH_SUMMARY.md` for the analysis.
+  - Generate `tokenizer.json` matching HF's structural schema (target tokenizers >= 0.20.0)
+  - Optionally generate `tokenizer_config.json` (minimal 5.x form)
+  - Replicate the GPT-2 byte-to-unicode table for `ByteLevel` (use `research/hf_export/reference/byte_to_unicode.rs`)
+  - Acceptance: `AutoTokenizer.from_pretrained("./out/")` loads, encode/decode roundtrips text correctly
+  - Acceptance: diff our `tokenizer.json` against the captured HF references in `research/hf_export/reference/` for structural fields (every key present, types match, enum spellings match) — IDs WILL differ; structure must not
+- [ ] **HF-renumber tool** (post-export, optional)
+  - Take a wisetok-exported tokenizer.json and produce a second one with HF's standard layout (specials 0..S-1, bytes S..S+255, merges S+256..end). Pure permutation, no retraining, reversible.
+  - For users who need numerical ID parity with HF-trained tokenizers on the same corpus.
+  - Not a blocker; can be skipped if nobody needs it.
+  - Acceptance: round-trip wisetok → renumber → AutoTokenizer load → encode same text → IDs in HF layout
 - [ ] Wire pre-tokenizer pipeline into `train_from_iterator`
   - Replace the inline regex with a configurable `Box<dyn PreTokenizer>`
   - Default: `Sequence([RegexPreTokenizer(GPT4_PATTERN), DigitSplitter])`
