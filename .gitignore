@@ -27,3 +27,6 @@ wheels/
 
 # Ignore dir for various dev files and artifacts
 ignore/
+
+# Claude Code internal state (agent worktrees, etc.)
+.claude/
