@@ -91,3 +91,15 @@ Per `Spec.md`:
 - Replace `expect("regex match failed")` in `train_from_iterator` with logged-skip behavior matching `RegexPreTokenizer`
 - Add `debug_assert!(c > 0)` above every `as u64` cast in `merge::bpe.rs`
 - Decide on `min_frequency` boundary semantics (doc-only or type-tightened)
+
+## Better progress / loading UX
+
+Observed during the 32GB production run: the only signal that aggregation is alive is the 5s RAM sampler. The byte progress bar is rendered to stderr and disappears under `nohup` / non-tty. There is no per-file completion line, no ingest-rate readout, no merge-phase ETA.
+
+- [ ] **Aggregation: log per-file completion** — emit `INFO` line when each input file finishes: bytes read, chunks added, ingest rate (MB/s), elapsed, cumulative unique chunks. Fixes the "is it stuck on file 1 or just slow?" mystery on multi-file runs.
+- [ ] **Aggregation: log every N seconds** with `bytes_done / bytes_total`, MB/s, and unique-chunk count. Currently the only periodic line is RAM RSS, which doesn't tell you whether ingest is moving.
+- [ ] **Aggregation: detect non-tty and switch indicatif to a log-friendly drawer** (`ProgressDrawTarget::stdout_with_hz` or fall back to periodic INFO lines). Right now under `nohup` the progress bar effectively vanishes.
+- [ ] **Merge: log every M merges (default 500)** with merges_done / total, current pair count, merges/sec, ETA. The progress bar exists but, again, is invisible under `nohup`. A periodic INFO line is cheap and survives any output redirection.
+- [ ] **Phase headers** — emit `=== Phase 1: aggregation ===` and `=== Phase 2: merge ===` log lines so the boundary is greppable. Today you have to infer it from RSS shape.
+- [ ] **Final summary line** — single one-line key=value summary at the end (`unique_chunks=…, filtered=…, merges=…, peak_rss=…, agg_secs=…, merge_secs=…`) suitable for log-scraping and post-hoc analysis.
+- [ ] **Optional: `--stats-json <path>`** — write the same summary as JSON, plus per-file ingest stats and per-bucket merge throughput. Useful for CI dashboards and the "did this run improve over the last one?" comparison.

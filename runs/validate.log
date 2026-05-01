@@ -1,0 +1,57 @@
+Loading /media/data1tb/ezellm-coder-tokenizer/wisetok-production/tokenizer.json
+vocab_size: 24600
+
+--- Sanity encodes ---
+'def __init__(self):'                    -> 6 tok
+'import numpy as np'                     -> 4 tok
+'for i in range(10):'                    -> 8 tok
+'    return self.value'                  -> 4 tok
+
+--- Roundtrip ---
+basic: PASS  (52 chars -> 16 tok, ratio=3.25)
+
+--- Whitespace ---
+  '    '               -> 1 tok ✓
+  '        '           -> 1 tok ✓
+  '\t'                 -> 1 tok ✓
+  '\n    '             -> 2 tok ✗ (2)
+  '\n        '         -> 2 tok ✗ (2)
+  '\n\t'               -> 2 tok ✗ (2)
+  '\n\n'               -> 2 tok ✗ (2)
+
+--- Specials ---
+  <|endoftext|>        -> [24576] ✓
+  <|fim_prefix|>       -> [24577] ✓
+  <|fim_middle|>       -> [24578] ✓
+  <|fim_suffix|>       -> [24579] ✓
+  <|im_start|>         -> [60, 124, 403, 3504, 124, 62] ✗ (6)
+  <|im_end|>           -> [60, 124, 403, 4049, 124, 62] ✗ (6)
+
+--- Real-file roundtrip ---
+  found 84 parquet shards
+  reading train-00011-of-00084.parquet
+  10/10 pass; chars/tok = 3.395
+
+--- Top 20 merges (by id, 256-275) ---
+    256: ['Ġ', 'Ġ']
+    257: ['ĠĠ', 'ĠĠ']
+    258: ['i', 'n']
+    259: ['ĠĠ', 'Ġ']
+    260: ['Ġ', 't']
+    261: ['e', 'r']
+    262: ['ĠĠĠĠ', 'ĠĠĠĠ']
+    263: ['o', 'n']
+    264: ['r', 'e']
+    265: ['a', 't']
+    266: ['Ġ', 'a']
+    267: ['o', 'r']
+    268: ['e', 'n']
+    269: ['s', 't']
+    270: ['s', 'e']
+    271: ['h', 'e']
+    272: ['\\', 'x']
+    273: ['a', 'l']
+    274: ['Ġ', 'c']
+    275: ['Ġ', '=']
+
+Done.

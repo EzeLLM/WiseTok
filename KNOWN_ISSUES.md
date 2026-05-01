@@ -50,6 +50,12 @@ Tracked items found during the Iteration-1 review. None block correctness today;
 - **What:** 4× memory blowup vs. raw bytes during the pre-merge phase. After the first merge that produces an id ≥ 256, `Vec<u32>` is required, so the optimization is "use `Vec<u8>` until the first such merge, then upgrade." Complex for marginal gain.
 - **Fix:** Defer. Possibly revisit during the Iteration-2 memory work.
 
+### CLI binary links libpython unnecessarily
+- **Where:** `Cargo.toml` declares pyo3 as a top-level dep so it's linked into the `wisetok` binary's rlib path even though the binary never touches Python.
+- **Symptom:** `./target/release/wisetok --help` fails with `libpython3.X.so.1.0: cannot open shared object file` unless `LD_LIBRARY_PATH` points at the conda libdir.
+- **Workaround:** `LD_LIBRARY_PATH=$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))') ./target/release/wisetok ...`
+- **Fix (deferred):** Move the pyo3 dep behind a `python` feature, gate `src/python.rs` on it, and have `[[bin]]` build with `default-features = false`. Mechanical but touches every cfg path; not worth doing mid-validation run.
+
 ## Documentation
 
 ### `RegexPreTokenizer::pattern_str` is unused
