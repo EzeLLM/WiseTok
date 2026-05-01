@@ -8,6 +8,7 @@
 
 pub mod export;
 pub(crate) mod merge;
+pub mod pretokenizer;
 pub mod python;
 
 /// `(left_id, right_id)` — the canonical key for BPE merges.
