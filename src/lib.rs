@@ -54,7 +54,7 @@ impl Word {
     ///   -1 for removed pairs, +1 for newly created pairs.
     ///
     /// NOTE: this version deliberately avoids a HashMap in the hot loop.
-    fn merge_pair(&mut self, pair: Pair, new_id: u32) -> Vec<(Pair, i32)> {
+    fn merge_pair(&mut self, pair: Pair, new_id: u32) -> Vec<(Pair, i64)> {
         let (a, b) = pair;
         let n = self.ids.len();
         if n < 2 {
@@ -62,7 +62,7 @@ impl Word {
         }
 
         let mut out: Vec<u32> = Vec::with_capacity(n);
-        let mut deltas: Vec<(Pair, i32)> = Vec::with_capacity(6);
+        let mut deltas: Vec<(Pair, i64)> = Vec::with_capacity(6);
 
         let mut i = 0;
         while i < n {
@@ -134,13 +134,13 @@ impl Ord for MergeJob {
 #[inline]
 fn count_pairs_parallel(
     words: &[Word],
-    counts: &[i32],
-) -> (AHashMap<Pair, i32>, AHashMap<Pair, AHashSet<usize>>) {
+    counts: &[i64],
+) -> (AHashMap<Pair, i64>, AHashMap<Pair, AHashSet<usize>>) {
     words
         .par_iter()
         .enumerate()
         .map(|(i, w)| {
-            let mut local_pc: AHashMap<Pair, i32> = AHashMap::new();
+            let mut local_pc: AHashMap<Pair, i64> = AHashMap::new();
             let mut local_wtu: AHashMap<Pair, AHashSet<usize>> = AHashMap::new();
             if w.ids.len() >= 2 && counts[i] != 0 {
                 for (a, b) in w.pairs() {
@@ -170,7 +170,7 @@ impl Tokenizer {
     /// Core incremental BPE training given unique words and their counts.
     /// `words`: one entry per unique chunk (Vec<u32> of token-ids/bytes).
     /// `counts`: same length as `words`, count per chunk.
-    fn train_core_incremental(&mut self, mut words: Vec<Word>, counts: Vec<i32>, vocab_size: u32) {
+    fn train_core_incremental(&mut self, mut words: Vec<Word>, counts: Vec<i64>, vocab_size: u32) {
         assert!(vocab_size >= 256, "vocab_size must be at least 256");
         let num_merges = vocab_size - 256;
         log::info!("Starting BPE training: {} merges to compute", num_merges);
@@ -315,7 +315,7 @@ impl Tokenizer {
         };
 
         // Global chunk counts
-        let mut counts: AHashMap<CompactString, i32> = AHashMap::new();
+        let mut counts: AHashMap<CompactString, i64> = AHashMap::new();
 
         // Temporary buffer we refill under the GIL
         let mut buf: Vec<String> = Vec::with_capacity(buffer_size);
@@ -367,10 +367,10 @@ impl Tokenizer {
             total_sequences += buf.len() as u64;
 
             let pattern = self.compiled_pattern.clone();
-            let local: AHashMap<CompactString, i32> = py.detach(|| {
+            let local: AHashMap<CompactString, i64> = py.detach(|| {
                 buf.par_iter()
                     .map(|s| {
-                        let mut m: AHashMap<CompactString, i32> = AHashMap::new();
+                        let mut m: AHashMap<CompactString, i64> = AHashMap::new();
                         for mat in pattern.find_iter(s) {
                             let piece = mat.expect("regex match failed").as_str();
                             *m.entry(CompactString::from(piece)).or_default() += 1;
@@ -805,7 +805,7 @@ mod tests {
         assert_eq!(word.ids, vec![256, 99, 256]);
 
         // Count (1, 2) removals in deltas
-        let ab_removals: i32 = deltas
+        let ab_removals: i64 = deltas
             .iter()
             .filter(|(p, _)| *p == (1, 2))
             .map(|(_, d)| d)
@@ -1031,7 +1031,7 @@ mod tests {
         let deltas = word.merge_pair((1, 2), 99);
 
         // Aggregate deltas by pair
-        let mut delta_map: StdHashMap<Pair, i32> = StdHashMap::new();
+        let mut delta_map: StdHashMap<Pair, i64> = StdHashMap::new();
         for (pair, delta) in deltas {
             *delta_map.entry(pair).or_default() += delta;
         }
@@ -1051,7 +1051,7 @@ mod tests {
     #[test]
     fn test_count_pairs_parallel_empty() {
         let words: Vec<Word> = vec![];
-        let counts: Vec<i32> = vec![];
+        let counts: Vec<i64> = vec![];
 
         let (pair_counts, positions) = count_pairs_parallel(&words, &counts);
         assert!(pair_counts.is_empty());
