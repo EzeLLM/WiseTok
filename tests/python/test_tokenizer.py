@@ -1499,3 +1499,63 @@ def test_aggregate_merge_mode_scan_matches_single_pass_scan():
         single_ranks = {tuple(b): i for (b, i) in tok_single.get_mergeable_ranks()}
         assert phased_ranks == single_ranks
     print("✅ phase separation composes with merge_mode='scan'")
+
+
+# =============================================================================
+# RAM monitoring (Iteration 2 — peak RSS reporting)
+# =============================================================================
+
+def test_monitor_ram_records_nonzero_peak():
+    """`peak_rss_bytes` must be 0 before training and > 0 after a training
+    call with `monitor_ram=True`."""
+    tok = wisetok.Tokenizer()
+    assert tok.peak_rss_bytes == 0
+    tok.train_from_iterator(
+        iter(["hello world " * 100] * 5),
+        vocab_size=300,
+        monitor_ram=True,
+    )
+    assert tok.peak_rss_bytes > 0
+    print(f"✅ monitor_ram records peak RSS = {tok.peak_rss_bytes / 1024 / 1024:.1f} MB")
+
+
+def test_monitor_ram_default_off():
+    """Without `monitor_ram=True`, peak_rss_bytes stays 0."""
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(iter(["hello world"] * 10), vocab_size=300)
+    assert tok.peak_rss_bytes == 0
+    print("✅ monitor_ram defaults to off")
+
+
+def test_monitor_ram_invalid_warn_at_raises():
+    """Garbage `ram_warn_at` strings must raise ValueError."""
+    tok = wisetok.Tokenizer()
+    with pytest.raises(ValueError, match="ram_warn_at"):
+        tok.train_from_iterator(
+            iter(["x"] * 5),
+            vocab_size=300,
+            monitor_ram=True,
+            ram_warn_at="not-a-size",
+        )
+    print("✅ monitor_ram rejects invalid ram_warn_at")
+
+
+def test_monitor_ram_works_for_aggregate_and_train_from_aggregate():
+    """All three training entry points support monitor_ram."""
+    import tempfile, os
+    corpus = ["hello world " * 50] * 5
+
+    with tempfile.TemporaryDirectory() as d:
+        agg_path = os.path.join(d, "x.agg")
+        tok = wisetok.Tokenizer()
+        tok.aggregate(iter(corpus), agg_path, monitor_ram=True)
+        assert tok.peak_rss_bytes > 0
+        peak_after_agg = tok.peak_rss_bytes
+
+        tok.train_from_aggregate(agg_path, vocab_size=300, monitor_ram=True)
+        # Each call resets peak; merge phase may be smaller than aggregate.
+        assert tok.peak_rss_bytes > 0
+    print(
+        f"✅ monitor_ram works on aggregate ({peak_after_agg / 1024 / 1024:.1f} MB) "
+        f"and train_from_aggregate ({tok.peak_rss_bytes / 1024 / 1024:.1f} MB)"
+    )

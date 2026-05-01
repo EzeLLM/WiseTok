@@ -12,8 +12,35 @@ use rayon::prelude::*;
 use crate::aggregate::{aggregate_into_counts, file as agg_file, AggregateFile};
 use crate::merge::{resolve_mode, train_core, MergeMode, Word};
 use crate::pretokenizer::{DigitSplitter, PreTokenizer, RegexPreTokenizer, SequencePreTokenizer};
+use crate::ram::{parse_size, RamMonitor};
 use crate::special_tokens::{Segment, SpecialTokenRegistry};
 use crate::{Pair, GPT4_PATTERN};
+
+/// Start a [`RamMonitor`] if `monitor_ram` is true. Parses `ram_warn_at`
+/// for the warn threshold; returns `None` if monitoring is disabled.
+fn maybe_start_monitor(
+    monitor_ram: bool,
+    ram_warn_at: Option<&str>,
+    label: &str,
+) -> PyResult<Option<RamMonitor>> {
+    if !monitor_ram {
+        return Ok(None);
+    }
+    let warn = match ram_warn_at {
+        None => None,
+        Some(s) => Some(parse_size(s).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "could not parse ram_warn_at {:?}; try \"64GB\", \"512MB\", etc.",
+                s
+            ))
+        })?),
+    };
+    Ok(Some(RamMonitor::start(
+        std::time::Duration::from_secs(5),
+        warn,
+        label,
+    )))
+}
 
 /// Build a `Box<dyn PreTokenizer>` from a spec string.
 ///
@@ -159,6 +186,11 @@ pub struct Tokenizer {
     /// pre-assigned IDs). IDs are assigned at HF-export / encode time as
     /// `256 + num_merges + index_in_registry`.
     pub(crate) specials: SpecialTokenRegistry,
+    /// Peak RSS observed during the most recent training call, in bytes.
+    /// Zero if no training has been run with `monitor_ram=True`. Reset
+    /// at the start of every `train_from_iterator` / `aggregate` /
+    /// `train_from_aggregate` call.
+    pub(crate) peak_rss_bytes: u64,
 }
 
 impl Default for Tokenizer {
@@ -178,6 +210,7 @@ impl Tokenizer {
             compiled_pattern: Regex::new("").expect("Empty regex should be valid"),
             pre_tokenizer: None,
             specials: SpecialTokenRegistry::new(),
+            peak_rss_bytes: 0,
         }
     }
 
@@ -209,9 +242,9 @@ impl Tokenizer {
     ///   - `"auto"`  — pick `scan` when unique-word count exceeds 1M, else
     ///                 `full`. This is the default.
     /// All modes produce byte-identical merge tables on the same input.
-    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None, merge_mode=None))]
+    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None, merge_mode=None, monitor_ram=false, ram_warn_at=None))]
     #[pyo3(
-        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None, merge_mode=None)"
+        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None, merge_mode=None, monitor_ram=False, ram_warn_at=None)"
     )]
     #[allow(clippy::too_many_arguments)]
     pub fn train_from_iterator(
@@ -225,7 +258,11 @@ impl Tokenizer {
         pre_tokenizer: Option<String>,
         special_tokens: Option<Vec<String>>,
         merge_mode: Option<String>,
+        monitor_ram: bool,
+        ram_warn_at: Option<String>,
     ) -> PyResult<()> {
+        self.peak_rss_bytes = 0;
+        let mut monitor = maybe_start_monitor(monitor_ram, ram_warn_at.as_deref(), "train")?;
         // Resolve the pre-tokenizer pipeline. The legacy `pattern` argument
         // and the new `pre_tokenizer` spec are mutually exclusive — let the
         // user know if they pass both rather than picking one silently.
@@ -283,6 +320,14 @@ impl Tokenizer {
 
         // Store the pipeline for later encode() calls.
         self.pre_tokenizer = Some(pre);
+        if let Some(m) = monitor.as_mut() {
+            m.stop();
+            self.peak_rss_bytes = m.peak_bytes();
+            log::info!(
+                "training peak RSS: {}",
+                crate::ram::format_bytes(self.peak_rss_bytes)
+            );
+        }
         Ok(())
     }
 
@@ -304,9 +349,9 @@ impl Tokenizer {
     /// token registry are updated to match the aggregation config — so
     /// the same `Tokenizer` instance can be passed to
     /// `train_from_aggregate` afterwards if desired.
-    #[pyo3(signature = (iterator, output_path, buffer_size=8192, pattern=None, pre_tokenizer=None, special_tokens=None))]
+    #[pyo3(signature = (iterator, output_path, buffer_size=8192, pattern=None, pre_tokenizer=None, special_tokens=None, monitor_ram=false, ram_warn_at=None))]
     #[pyo3(
-        text_signature = "(self, iterator, output_path, buffer_size=8192, pattern=None, pre_tokenizer=None, special_tokens=None)"
+        text_signature = "(self, iterator, output_path, buffer_size=8192, pattern=None, pre_tokenizer=None, special_tokens=None, monitor_ram=False, ram_warn_at=None)"
     )]
     #[allow(clippy::too_many_arguments)]
     pub fn aggregate(
@@ -318,7 +363,11 @@ impl Tokenizer {
         pattern: Option<String>,
         pre_tokenizer: Option<String>,
         special_tokens: Option<Vec<String>>,
+        monitor_ram: bool,
+        ram_warn_at: Option<String>,
     ) -> PyResult<()> {
+        self.peak_rss_bytes = 0;
+        let mut monitor = maybe_start_monitor(monitor_ram, ram_warn_at.as_deref(), "aggregate")?;
         if pattern.is_some() && pre_tokenizer.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "pass either `pattern` (legacy) or `pre_tokenizer` (new), not both",
@@ -386,6 +435,14 @@ impl Tokenizer {
         // Save the pipeline so the same `Tokenizer` instance can run
         // `train_from_aggregate` next without reconstructing it.
         self.pre_tokenizer = Some(pre);
+        if let Some(m) = monitor.as_mut() {
+            m.stop();
+            self.peak_rss_bytes = m.peak_bytes();
+            log::info!(
+                "aggregate peak RSS: {}",
+                crate::ram::format_bytes(self.peak_rss_bytes)
+            );
+        }
         Ok(())
     }
 
@@ -398,15 +455,21 @@ impl Tokenizer {
     /// `merge_mode` and `min_frequency` per call; running this multiple
     /// times against the same `.agg` is the intended way to sweep
     /// vocab sizes.
-    #[pyo3(signature = (agg_path, vocab_size, min_frequency=1, merge_mode=None))]
-    #[pyo3(text_signature = "(self, agg_path, vocab_size, min_frequency=1, merge_mode=None)")]
+    #[pyo3(signature = (agg_path, vocab_size, min_frequency=1, merge_mode=None, monitor_ram=false, ram_warn_at=None))]
+    #[pyo3(
+        text_signature = "(self, agg_path, vocab_size, min_frequency=1, merge_mode=None, monitor_ram=False, ram_warn_at=None)"
+    )]
     pub fn train_from_aggregate(
         &mut self,
         agg_path: &str,
         vocab_size: u32,
         min_frequency: i64,
         merge_mode: Option<String>,
+        monitor_ram: bool,
+        ram_warn_at: Option<String>,
     ) -> PyResult<()> {
+        self.peak_rss_bytes = 0;
+        let mut monitor = maybe_start_monitor(monitor_ram, ram_warn_at.as_deref(), "merge")?;
         let path = PathBuf::from(agg_path);
         let agg = agg_file::read_from_file(&path).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!(
@@ -448,12 +511,28 @@ impl Tokenizer {
         )?;
 
         self.pre_tokenizer = Some(pre);
+        if let Some(m) = monitor.as_mut() {
+            m.stop();
+            self.peak_rss_bytes = m.peak_bytes();
+            log::info!(
+                "merge peak RSS: {}",
+                crate::ram::format_bytes(self.peak_rss_bytes)
+            );
+        }
         Ok(())
     }
 
     /// Return the regex pattern.
     pub fn get_pattern(&self) -> String {
         self.pattern.clone()
+    }
+
+    /// Peak resident-set size, in bytes, observed during the most recent
+    /// training/aggregation call that was run with `monitor_ram=True`.
+    /// Returns 0 if no such call has been made yet.
+    #[getter]
+    pub fn peak_rss_bytes(&self) -> u64 {
+        self.peak_rss_bytes
     }
 
     /// Return the vocabulary size (256 base bytes + number of merges).
