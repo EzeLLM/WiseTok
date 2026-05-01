@@ -77,6 +77,7 @@ fn test_encode_with_pattern_no_merges() {
         merges: StdHashMap::new(),
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
+        pre_tokenizer: None,
     };
     let ids = tok.encode("hi");
     // 'h' = 104, 'i' = 105
@@ -92,6 +93,7 @@ fn test_encode_with_merges() {
         merges,
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
+        pre_tokenizer: None,
     };
 
     let ids = tok.encode("hi");
@@ -212,6 +214,7 @@ fn test_encode_chained_merges() {
         merges,
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
+        pre_tokenizer: None,
     };
 
     let ids = tok.encode("aaa");
@@ -233,6 +236,7 @@ fn test_encode_decode_roundtrip_simple() {
         merges,
         pattern: r"\w+|\s+".to_string(),
         compiled_pattern: Regex::new(r"\w+|\s+").unwrap(),
+        pre_tokenizer: None,
     };
 
     let text = "hi";
@@ -252,6 +256,7 @@ fn test_encode_decode_roundtrip_with_spaces() {
         merges,
         pattern: r"\w+|\s+".to_string(),
         compiled_pattern: Regex::new(r"\w+|\s+").unwrap(),
+        pre_tokenizer: None,
     };
 
     let text = "hello world";
@@ -316,6 +321,7 @@ fn test_encode_empty_string() {
         merges: StdHashMap::new(),
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
+        pre_tokenizer: None,
     };
 
     let ids = tok.encode("");
@@ -328,6 +334,7 @@ fn test_encode_no_matches() {
         merges: StdHashMap::new(),
         pattern: r"\w+".to_string(),
         compiled_pattern: Regex::new(r"\w+").unwrap(),
+        pre_tokenizer: None,
     };
 
     let ids = tok.encode("   ");

@@ -903,3 +903,93 @@ def test_hf_export_roundtrip_via_pretrained_tokenizer_fast():
         # check semantic round-trip.
         assert decoded.strip() == text.strip()
     print("✅ PreTrainedTokenizerFast loads the wisetok-exported file")
+
+
+def test_pre_tokenizer_digit_splitting():
+    """pre_tokenizer='gpt4+digits' must split each ASCII digit into its own
+    chunk during training, so multi-digit numbers cannot become a single
+    learned token."""
+    # Build a corpus where multi-digit numbers appear many times. With
+    # digit splitting, each digit is its own chunk; merges between digits
+    # require digit-pair frequency in the byte alphabet, not chunk-level
+    # frequency.
+    text = ("v128 v128 v128 v128 v128 " * 100) + "filler text " * 200
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator([text], vocab_size=300, pre_tokenizer="gpt4+digits")
+
+    # Encode "v128" — expect at least 4 tokens (v, 1, 2, 8) because each
+    # digit is split as its own chunk and digits cannot fuse with v.
+    ids = tok.encode("v128")
+    assert len(ids) >= 4, f"expected >=4 tokens for 'v128' with digit split, got {len(ids)}: {ids}"
+    print(f"✅ pre_tokenizer='gpt4+digits': 'v128' → {len(ids)} tokens")
+
+
+def test_pre_tokenizer_default_matches_legacy_pattern():
+    """No pre_tokenizer / no pattern args ≡ pre_tokenizer='gpt4'."""
+    text = "the quick brown fox jumps over the lazy dog. " * 50
+
+    a = wisetok.Tokenizer()
+    a.train_from_iterator([text], vocab_size=400)
+
+    b = wisetok.Tokenizer()
+    b.train_from_iterator([text], vocab_size=400, pre_tokenizer="gpt4")
+
+    sample = "the quick brown fox"
+    assert a.encode(sample) == b.encode(sample)
+    print("✅ default ≡ pre_tokenizer='gpt4'")
+
+
+def test_pre_tokenizer_pattern_and_spec_are_mutually_exclusive():
+    """Passing both pattern= and pre_tokenizer= must raise."""
+    tok = wisetok.Tokenizer()
+    with pytest.raises(ValueError, match="not both"):
+        tok.train_from_iterator(
+            ["hello"], vocab_size=300,
+            pattern=r"\w+", pre_tokenizer="gpt4",
+        )
+    print("✅ pattern + pre_tokenizer mutual exclusion raises")
+
+
+def test_pre_tokenizer_legacy_pattern_still_works():
+    """pattern= alone (no pre_tokenizer=) trains with that single regex."""
+    text = "abc abc abc def def def " * 100
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator([text], vocab_size=270, pattern=r"\w+")
+
+    # Should encode "abc" without error.
+    ids = tok.encode("abc")
+    assert len(ids) >= 1
+    assert tok.decode(ids) == "abc"
+    print("✅ legacy pattern= argument still works")
+
+
+def test_pre_tokenizer_unknown_spec_raises():
+    """Unknown spec strings get a clear ValueError."""
+    tok = wisetok.Tokenizer()
+    with pytest.raises(ValueError, match="unknown pre_tokenizer spec"):
+        tok.train_from_iterator(
+            ["hello"], vocab_size=300, pre_tokenizer="banana",
+        )
+    print("✅ unknown spec raises ValueError")
+
+
+def test_pre_tokenizer_encode_uses_same_pipeline_as_training():
+    """encode() must use the pre-tokenizer that was used at training time."""
+    # Use a custom regex that split-aware encode can reproduce.
+    text = "AAA BBB AAA BBB " * 100
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator([text], vocab_size=270, pre_tokenizer="regex:[A-Z]+")
+
+    # The pattern matches only uppercase runs. "AAA bbb CCC" should encode
+    # the AAAs and CCC but skip the lowercase chunk entirely (by design of
+    # this pre-tokenizer — non-matching text is dropped, same as upstream
+    # rustbpe behavior).
+    ids = tok.encode("AAA bbb CCC")
+    decoded = tok.decode(ids)
+    # Decoded may or may not contain spaces depending on merges; the
+    # invariant is that 'bbb' (which the regex doesn't match) is absent.
+    assert "b" not in decoded, f"lowercase 'b' should not encode: decoded={decoded!r}"
+    print(f"✅ encode uses same pipeline as training; decoded={decoded!r}")

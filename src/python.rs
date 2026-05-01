@@ -11,18 +11,73 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 
 use crate::merge::{train_core_incremental, Word};
+use crate::pretokenizer::{DigitSplitter, PreTokenizer, RegexPreTokenizer, SequencePreTokenizer};
 use crate::{Pair, GPT4_PATTERN};
+
+/// Build a `Box<dyn PreTokenizer>` from a spec string.
+///
+/// Recognized specs (returned pipeline noted alongside):
+///   - `"gpt4"`               → `RegexPreTokenizer(GPT4_PATTERN)`
+///   - `"gpt4+digits"`        → `Sequence([Regex(GPT4), DigitSplitter])`
+///   - `"regex:<pattern>"`    → `RegexPreTokenizer(<pattern>)`
+///   - `"regex+digits:<...>"` → `Sequence([Regex(<...>), DigitSplitter])`
+///
+/// Returns `(pipeline, canonical_pattern_string)`. The canonical string is
+/// what gets stored in `Tokenizer.pattern` and emitted to HF export — for
+/// the digit-split variants we emit the underlying regex, since the
+/// digit-split step is recorded separately in the HF export's pre_tokenizer
+/// Sequence.
+fn parse_pretokenizer_spec(spec: &str) -> PyResult<(Box<dyn PreTokenizer>, String)> {
+    if spec == "gpt4" {
+        let pre = RegexPreTokenizer::new(GPT4_PATTERN).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid GPT4_PATTERN: {}", e))
+        })?;
+        return Ok((Box::new(pre), GPT4_PATTERN.to_string()));
+    }
+    if spec == "gpt4+digits" {
+        let regex_pre = RegexPreTokenizer::new(GPT4_PATTERN).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid GPT4_PATTERN: {}", e))
+        })?;
+        let seq = SequencePreTokenizer::new(vec![Box::new(regex_pre), Box::new(DigitSplitter)]);
+        return Ok((Box::new(seq), GPT4_PATTERN.to_string()));
+    }
+    if let Some(pat) = spec.strip_prefix("regex:") {
+        let pre = RegexPreTokenizer::new(pat).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid regex {:?}: {}", pat, e))
+        })?;
+        return Ok((Box::new(pre), pat.to_string()));
+    }
+    if let Some(pat) = spec.strip_prefix("regex+digits:") {
+        let regex_pre = RegexPreTokenizer::new(pat).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid regex {:?}: {}", pat, e))
+        })?;
+        let seq = SequencePreTokenizer::new(vec![Box::new(regex_pre), Box::new(DigitSplitter)]);
+        return Ok((Box::new(seq), pat.to_string()));
+    }
+    Err(pyo3::exceptions::PyValueError::new_err(format!(
+        "unknown pre_tokenizer spec {:?}; supported: \"gpt4\", \"gpt4+digits\", \"regex:<pat>\", \"regex+digits:<pat>\"",
+        spec
+    )))
+}
 
 /// A Byte Pair Encoding tokenizer that matches the GPT-4 style implementation.
 #[pyclass]
 pub struct Tokenizer {
     /// Maps pairs of token IDs to their merged token ID.
     pub merges: StdHashMap<Pair, u32>,
-    /// The regex pattern used for text splitting.
+    /// The regex pattern used for text splitting (or a synthetic identifier
+    /// like "gpt4+digits" when a composed pre-tokenizer is in use). Stored
+    /// for HF export and `get_pattern()` callers — the runtime pipeline
+    /// is in `pre_tokenizer` below.
     pub pattern: String,
-    /// Compiled regex for efficiency. `pub(crate)` so internal tests can
+    /// Compiled regex used as the encode-side fallback path when no
+    /// `pre_tokenizer` is configured. `pub(crate)` so internal tests can
     /// construct fixtures via the struct literal; not exposed to Python.
     pub(crate) compiled_pattern: Regex,
+    /// The pre-tokenizer pipeline used during training and encoding. When
+    /// `None`, encode falls back to `compiled_pattern` (legacy path used by
+    /// internal struct-literal test fixtures). Set by `train_from_iterator`.
+    pub(crate) pre_tokenizer: Option<Box<dyn PreTokenizer>>,
 }
 
 impl Default for Tokenizer {
@@ -40,6 +95,7 @@ impl Tokenizer {
             merges: StdHashMap::new(),
             pattern: String::new(),
             compiled_pattern: Regex::new("").expect("Empty regex should be valid"),
+            pre_tokenizer: None,
         }
     }
 
@@ -47,14 +103,27 @@ impl Tokenizer {
     /// We refill a Rust `Vec<String>` buffer under the GIL, then release the
     /// GIL to do the heavy splitting and counting **in parallel** with rayon.
     ///
+    /// `pattern` (legacy): if set, use that regex as the sole pre-tokenizer.
+    /// Equivalent to `pre_tokenizer="regex:<pattern>"`. Default: GPT-4 regex.
+    ///
+    /// `pre_tokenizer` (new): a spec string for a more elaborate pipeline.
+    /// Recognized values:
+    ///   - `"gpt4"`               GPT-4 regex only (matches the legacy default)
+    ///   - `"gpt4+digits"`        GPT-4 regex then individual-digit splitting
+    ///   - `"regex:<pattern>"`    custom regex
+    ///   - `"regex+digits:<pat>"` custom regex then digit splitting
+    /// Cannot be combined with `pattern`. If both are unset, the GPT-4
+    /// regex-only pipeline is used (backward-compatible default).
+    ///
     /// `min_frequency` drops chunks that occurred fewer than this many times
     /// before the merge loop runs. `min_frequency=1` keeps every chunk
     /// (legacy default; same as upstream rustbpe). Higher values shrink the
     /// word table at the cost of dropping rare chunks from training.
-    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1))]
+    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None))]
     #[pyo3(
-        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1)"
+        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None)"
     )]
+    #[allow(clippy::too_many_arguments)]
     pub fn train_from_iterator(
         &mut self,
         py: pyo3::Python<'_>,
@@ -63,11 +132,33 @@ impl Tokenizer {
         buffer_size: usize,
         pattern: Option<String>,
         min_frequency: i64,
+        pre_tokenizer: Option<String>,
     ) -> PyResult<()> {
-        // Use provided pattern or default to GPT-4 pattern.
-        let pattern_str = pattern.unwrap_or_else(|| GPT4_PATTERN.to_string());
+        // Resolve the pre-tokenizer pipeline. The legacy `pattern` argument
+        // and the new `pre_tokenizer` spec are mutually exclusive — let the
+        // user know if they pass both rather than picking one silently.
+        if pattern.is_some() && pre_tokenizer.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "pass either `pattern` (legacy) or `pre_tokenizer` (new), not both",
+            ));
+        }
+        let (pre, pattern_str): (Box<dyn PreTokenizer>, String) = if let Some(spec) =
+            pre_tokenizer
+        {
+            parse_pretokenizer_spec(&spec)?
+        } else if let Some(pat) = pattern {
+            let r = RegexPreTokenizer::new(&pat).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("invalid regex pattern: {}", e))
+            })?;
+            (Box::new(r), pat)
+        } else {
+            // Default: GPT-4 regex only (matches upstream rustbpe).
+            parse_pretokenizer_spec("gpt4")?
+        };
 
-        // Update the stored pattern and compile it.
+        // Store the canonical pattern + a fallback compiled regex for the
+        // legacy encode path. Encode itself uses `self.pre_tokenizer` once
+        // it is set below.
         self.pattern = pattern_str.clone();
         self.compiled_pattern = Regex::new(&pattern_str).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
@@ -129,13 +220,14 @@ impl Tokenizer {
 
             total_sequences += buf.len() as u64;
 
-            let pattern = self.compiled_pattern.clone();
+            // Borrow the pre-tokenizer across rayon workers. The trait is
+            // Send + Sync, so an immutable reference is shared safely.
+            let pre_ref: &dyn PreTokenizer = &*pre;
             let local: AHashMap<CompactString, i64> = py.detach(|| {
                 buf.par_iter()
                     .map(|s| {
                         let mut m: AHashMap<CompactString, i64> = AHashMap::new();
-                        for mat in pattern.find_iter(s) {
-                            let piece = mat.expect("regex match failed").as_str();
+                        for piece in pre_ref.pre_tokenize(s) {
                             *m.entry(CompactString::from(piece)).or_default() += 1;
                         }
                         m
@@ -186,6 +278,9 @@ impl Tokenizer {
         }
 
         train_core_incremental(&mut words, &cvec, vocab_size, &mut self.merges);
+
+        // Store the pipeline for later encode() calls.
+        self.pre_tokenizer = Some(pre);
         Ok(())
     }
 
@@ -261,39 +356,24 @@ impl Tokenizer {
     pub fn encode(&self, text: &str) -> Vec<u32> {
         let mut all_ids = Vec::new();
 
-        for m in self.compiled_pattern.find_iter(text) {
-            let chunk = match m {
-                Ok(mat) => mat.as_str(),
-                Err(e) => {
-                    log::warn!("Regex match error, skipping chunk: {}", e);
-                    continue;
-                }
-            };
-
-            let mut ids: Vec<u32> = chunk.bytes().map(|b| b as u32).collect();
-
-            // Apply merges iteratively (always merge the earliest-learned pair first).
-            while ids.len() >= 2 {
-                let mut best_pair: Option<(usize, Pair, u32)> = None;
-
-                for i in 0..ids.len() - 1 {
-                    let pair: Pair = (ids[i], ids[i + 1]);
-                    if let Some(&new_id) = self.merges.get(&pair) {
-                        if best_pair.is_none() || new_id < best_pair.unwrap().2 {
-                            best_pair = Some((i, pair, new_id));
-                        }
-                    }
-                }
-
-                if let Some((idx, _pair, new_id)) = best_pair {
-                    ids[idx] = new_id;
-                    ids.remove(idx + 1);
-                } else {
-                    break;
-                }
+        // Prefer the stored pre-tokenizer (set by train_from_iterator). Fall
+        // back to compiled_pattern for fixtures that construct Tokenizer via
+        // the struct literal in tests.
+        if let Some(pre) = &self.pre_tokenizer {
+            for chunk in pre.pre_tokenize(text) {
+                self.encode_chunk_into(chunk, &mut all_ids);
             }
-
-            all_ids.extend(ids);
+        } else {
+            for m in self.compiled_pattern.find_iter(text) {
+                let chunk = match m {
+                    Ok(mat) => mat.as_str(),
+                    Err(e) => {
+                        log::warn!("Regex match error, skipping chunk: {}", e);
+                        continue;
+                    }
+                };
+                self.encode_chunk_into(chunk, &mut all_ids);
+            }
         }
 
         all_ids
@@ -359,6 +439,37 @@ impl Tokenizer {
         });
 
         Ok(results)
+    }
+}
+
+/// Internal-only helpers. Kept in a non-pymethods impl block because PyO3
+/// won't accept methods that take generic / non-Python types.
+impl Tokenizer {
+    /// Apply BPE merges to one pre-tokenizer chunk and append its IDs to
+    /// `out`. Picks the earliest-learned (lowest `new_id`) merge each step.
+    fn encode_chunk_into(&self, chunk: &str, out: &mut Vec<u32>) {
+        let mut ids: Vec<u32> = chunk.bytes().map(|b| b as u32).collect();
+
+        while ids.len() >= 2 {
+            let mut best_pair: Option<(usize, Pair, u32)> = None;
+            for i in 0..ids.len() - 1 {
+                let pair: Pair = (ids[i], ids[i + 1]);
+                if let Some(&new_id) = self.merges.get(&pair) {
+                    if best_pair.is_none() || new_id < best_pair.unwrap().2 {
+                        best_pair = Some((i, pair, new_id));
+                    }
+                }
+            }
+
+            if let Some((idx, _pair, new_id)) = best_pair {
+                ids[idx] = new_id;
+                ids.remove(idx + 1);
+            } else {
+                break;
+            }
+        }
+
+        out.extend(ids);
     }
 }
 
