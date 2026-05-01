@@ -3,13 +3,13 @@
 //! Public surface: the `Tokenizer` pyclass.
 
 use std::collections::HashMap as StdHashMap;
+use std::path::PathBuf;
 
-use ahash::AHashMap;
-use compact_str::CompactString;
 use fancy_regex::Regex;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
+use crate::aggregate::{aggregate_into_counts, file as agg_file, AggregateFile};
 use crate::merge::{resolve_mode, train_core, MergeMode, Word};
 use crate::pretokenizer::{DigitSplitter, PreTokenizer, RegexPreTokenizer, SequencePreTokenizer};
 use crate::special_tokens::{Segment, SpecialTokenRegistry};
@@ -23,42 +23,115 @@ use crate::{Pair, GPT4_PATTERN};
 ///   - `"regex:<pattern>"`    → `RegexPreTokenizer(<pattern>)`
 ///   - `"regex+digits:<...>"` → `Sequence([Regex(<...>), DigitSplitter])`
 ///
-/// Returns `(pipeline, canonical_pattern_string)`. The canonical string is
-/// what gets stored in `Tokenizer.pattern` and emitted to HF export — for
-/// the digit-split variants we emit the underlying regex, since the
-/// digit-split step is recorded separately in the HF export's pre_tokenizer
-/// Sequence.
-fn parse_pretokenizer_spec(spec: &str) -> PyResult<(Box<dyn PreTokenizer>, String)> {
+/// Returns `(pipeline, pattern, spec_canonical)`:
+///   - `pipeline` is the runtime pre-tokenizer.
+///   - `pattern` is the underlying regex (without the `+digits` step).
+///     This is what gets stored in `Tokenizer.pattern` and emitted to HF
+///     export — the digit-split step is recorded separately in the HF
+///     export's pre_tokenizer Sequence.
+///   - `spec_canonical` is the canonical spec string suitable for round-
+///     tripping through an `.agg` file: e.g. always `"gpt4+digits"` (not
+///     `"regex+digits:..."`) when the input was `"gpt4+digits"`.
+fn parse_pretokenizer_spec(spec: &str) -> PyResult<(Box<dyn PreTokenizer>, String, String)> {
     if spec == "gpt4" {
         let pre = RegexPreTokenizer::new(GPT4_PATTERN).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("invalid GPT4_PATTERN: {}", e))
         })?;
-        return Ok((Box::new(pre), GPT4_PATTERN.to_string()));
+        return Ok((Box::new(pre), GPT4_PATTERN.to_string(), "gpt4".to_string()));
     }
     if spec == "gpt4+digits" {
         let regex_pre = RegexPreTokenizer::new(GPT4_PATTERN).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("invalid GPT4_PATTERN: {}", e))
         })?;
         let seq = SequencePreTokenizer::new(vec![Box::new(regex_pre), Box::new(DigitSplitter)]);
-        return Ok((Box::new(seq), GPT4_PATTERN.to_string()));
+        return Ok((
+            Box::new(seq),
+            GPT4_PATTERN.to_string(),
+            "gpt4+digits".to_string(),
+        ));
     }
     if let Some(pat) = spec.strip_prefix("regex:") {
         let pre = RegexPreTokenizer::new(pat).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("invalid regex {:?}: {}", pat, e))
         })?;
-        return Ok((Box::new(pre), pat.to_string()));
+        return Ok((Box::new(pre), pat.to_string(), format!("regex:{}", pat)));
     }
     if let Some(pat) = spec.strip_prefix("regex+digits:") {
         let regex_pre = RegexPreTokenizer::new(pat).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("invalid regex {:?}: {}", pat, e))
         })?;
         let seq = SequencePreTokenizer::new(vec![Box::new(regex_pre), Box::new(DigitSplitter)]);
-        return Ok((Box::new(seq), pat.to_string()));
+        return Ok((
+            Box::new(seq),
+            pat.to_string(),
+            format!("regex+digits:{}", pat),
+        ));
     }
     Err(pyo3::exceptions::PyValueError::new_err(format!(
         "unknown pre_tokenizer spec {:?}; supported: \"gpt4\", \"gpt4+digits\", \"regex:<pat>\", \"regex+digits:<pat>\"",
         spec
     )))
+}
+
+/// Build words / counts vectors from an iterator of `(chunk_bytes, count)`,
+/// applying `min_frequency`, then run the merge loop into `merges`.
+///
+/// Shared by `train_from_iterator` (which feeds in counts straight from the
+/// streaming aggregator) and `train_from_aggregate` (which feeds in counts
+/// from a `.agg` file). Centralizing this guarantees byte-identical merge
+/// tables across the two paths on the same input.
+fn materialize_and_train(
+    chunks: impl IntoIterator<Item = (Vec<u8>, i64)>,
+    min_frequency: i64,
+    vocab_size: u32,
+    merge_mode: Option<&str>,
+    merges_out: &mut StdHashMap<Pair, u32>,
+) -> PyResult<()> {
+    let mut total_unique = 0usize;
+    let mut words: Vec<Word> = Vec::new();
+    let mut cvec: Vec<i64> = Vec::new();
+    for (chunk_bytes, c) in chunks {
+        total_unique += 1;
+        if c < min_frequency {
+            continue;
+        }
+        words.push(Word::new(chunk_bytes.iter().map(|&b| b as u32).collect()));
+        cvec.push(c);
+    }
+    if min_frequency > 1 {
+        log::info!(
+            "min_frequency={} filtered {} → {} unique chunks",
+            min_frequency,
+            total_unique,
+            words.len()
+        );
+    }
+
+    // Resolve merge mode. Default `Auto`. Strings are case-insensitive.
+    let mode = match merge_mode {
+        None => MergeMode::Auto,
+        Some(s) => match s.to_ascii_lowercase().as_str() {
+            "full" => MergeMode::Full,
+            "scan" => MergeMode::Scan,
+            "auto" => MergeMode::Auto,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown merge_mode {:?}; supported: \"full\", \"scan\", \"auto\"",
+                    other
+                )));
+            }
+        },
+    };
+    let resolved = resolve_mode(mode, words.len());
+    log::info!(
+        "merge_mode = {:?} (resolved from {:?}, unique_words = {})",
+        resolved,
+        mode,
+        words.len()
+    );
+
+    train_core(&mut words, &cvec, vocab_size, merges_out, resolved);
+    Ok(())
 }
 
 /// A Byte Pair Encoding tokenizer that matches the GPT-4 style implementation.
@@ -161,18 +234,19 @@ impl Tokenizer {
                 "pass either `pattern` (legacy) or `pre_tokenizer` (new), not both",
             ));
         }
-        let (pre, pattern_str): (Box<dyn PreTokenizer>, String) = if let Some(spec) = pre_tokenizer
-        {
-            parse_pretokenizer_spec(&spec)?
-        } else if let Some(pat) = pattern {
-            let r = RegexPreTokenizer::new(&pat).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("invalid regex pattern: {}", e))
-            })?;
-            (Box::new(r), pat)
-        } else {
-            // Default: GPT-4 regex only (matches upstream rustbpe).
-            parse_pretokenizer_spec("gpt4")?
-        };
+        let (pre, pattern_str, _spec_canonical): (Box<dyn PreTokenizer>, String, String) =
+            if let Some(spec) = pre_tokenizer {
+                parse_pretokenizer_spec(&spec)?
+            } else if let Some(pat) = pattern {
+                let r = RegexPreTokenizer::new(&pat).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("invalid regex pattern: {}", e))
+                })?;
+                let canonical = format!("regex:{}", pat);
+                (Box::new(r), pat, canonical)
+            } else {
+                // Default: GPT-4 regex only (matches upstream rustbpe).
+                parse_pretokenizer_spec("gpt4")?
+            };
 
         // Store the canonical pattern + a fallback compiled regex for the
         // legacy encode path. Encode itself uses `self.pre_tokenizer` once
@@ -193,153 +267,186 @@ impl Tokenizer {
             }
         }
 
-        // Prepare a true Python iterator object.
-        let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
-            pyo3::Py::from_owned_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
-        };
+        // Streaming ingest → chunk counts. The same helper backs `aggregate`
+        // so phase-separated and single-pass training cannot diverge.
+        let (counts, _stats) =
+            aggregate_into_counts(py, iterator, buffer_size, pre.as_ref(), &self.specials)?;
 
-        // Global chunk counts.
-        let mut counts: AHashMap<CompactString, i64> = AHashMap::new();
-
-        // Temporary buffer we refill under the GIL.
-        let mut buf: Vec<String> = Vec::with_capacity(buffer_size);
-
-        log::info!(
-            "Processing sequences from iterator (buffer_size: {})",
-            buffer_size
-        );
-        let mut total_sequences = 0u64;
-
-        // Helper: refill `buf` with up to `buffer_size` strings from the
-        // Python iterator. Returns Ok(true) if the iterator is exhausted.
-        let refill = |buf: &mut Vec<String>| -> PyResult<bool> {
-            pyo3::Python::attach(|py| {
-                buf.clear();
-                let it = py_iter.bind(py);
-                loop {
-                    if buf.len() >= buffer_size {
-                        return Ok(false);
-                    }
-                    let next_obj = unsafe {
-                        pyo3::Bound::from_owned_ptr_or_opt(py, pyo3::ffi::PyIter_Next(it.as_ptr()))
-                    };
-                    match next_obj {
-                        Some(obj) => {
-                            let s: String = obj.extract()?;
-                            buf.push(s);
-                        }
-                        None => {
-                            if pyo3::PyErr::occurred(py) {
-                                return Err(pyo3::PyErr::fetch(py));
-                            } else {
-                                return Ok(true); // exhausted
-                            }
-                        }
-                    }
-                }
-            })
-        };
-
-        // Stream ingestion loop: refill under GIL, process without GIL (parallel).
-        loop {
-            let exhausted = refill(&mut buf)?;
-            if buf.is_empty() && exhausted {
-                break;
-            }
-
-            total_sequences += buf.len() as u64;
-
-            // Borrow the pre-tokenizer and special-token registry across
-            // rayon workers. Both are Send + Sync so immutable references
-            // are shared safely. Specials are split off first so they
-            // bypass BPE entirely; only Text segments feed the pre-tokenizer.
-            let pre_ref: &dyn PreTokenizer = &*pre;
-            let specials_ref: &SpecialTokenRegistry = &self.specials;
-            let local: AHashMap<CompactString, i64> = py.detach(|| {
-                buf.par_iter()
-                    .map(|s| {
-                        let mut m: AHashMap<CompactString, i64> = AHashMap::new();
-                        for seg in specials_ref.split(s) {
-                            if let Segment::Text(text) = seg {
-                                for piece in pre_ref.pre_tokenize(text) {
-                                    *m.entry(CompactString::from(piece)).or_default() += 1;
-                                }
-                            }
-                            // Segment::Special: skip; never enters BPE.
-                        }
-                        m
-                    })
-                    .reduce(AHashMap::new, |mut a, b| {
-                        for (k, v) in b {
-                            *a.entry(k).or_default() += v;
-                        }
-                        a
-                    })
-            });
-
-            // Merge local into global (single-threaded).
-            for (k, v) in local {
-                *counts.entry(k).or_default() += v;
-            }
-
-            if exhausted {
-                break;
-            }
-        }
-        log::info!(
-            "Processed {} sequences total, {} unique",
-            total_sequences,
-            counts.len()
-        );
-
-        // Materialize words & counts, applying min_frequency.
-        let total_unique = counts.len();
-        let mut words = Vec::with_capacity(total_unique);
-        let mut cvec = Vec::with_capacity(total_unique);
-        for (chunk, c) in counts.into_iter() {
-            if c < min_frequency {
-                continue;
-            }
-            words.push(Word::new(
-                chunk.as_bytes().iter().map(|&b| b as u32).collect(),
-            ));
-            cvec.push(c);
-        }
-        if min_frequency > 1 {
-            log::info!(
-                "min_frequency={} filtered {} → {} unique chunks",
-                min_frequency,
-                total_unique,
-                words.len()
-            );
-        }
-
-        // Resolve merge mode. Default `Auto`. Strings are case-insensitive.
-        let mode = match merge_mode.as_deref() {
-            None => MergeMode::Auto,
-            Some(s) => match s.to_ascii_lowercase().as_str() {
-                "full" => MergeMode::Full,
-                "scan" => MergeMode::Scan,
-                "auto" => MergeMode::Auto,
-                other => {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "unknown merge_mode {:?}; supported: \"full\", \"scan\", \"auto\"",
-                        other
-                    )));
-                }
-            },
-        };
-        let resolved = resolve_mode(mode, words.len());
-        log::info!(
-            "merge_mode = {:?} (resolved from {:?}, unique_words = {})",
-            resolved,
-            mode,
-            words.len()
-        );
-
-        train_core(&mut words, &cvec, vocab_size, &mut self.merges, resolved);
+        // Materialize + train.
+        materialize_and_train(
+            counts.into_iter().map(|(s, c)| (s.as_bytes().to_vec(), c)),
+            min_frequency,
+            vocab_size,
+            merge_mode.as_deref(),
+            &mut self.merges,
+        )?;
 
         // Store the pipeline for later encode() calls.
+        self.pre_tokenizer = Some(pre);
+        Ok(())
+    }
+
+    /// Aggregate text from an iterator and write a `.agg` file.
+    ///
+    /// Reads everything from `iterator`, applies the pre-tokenizer +
+    /// special-token splitter, counts unique chunks, and writes the
+    /// result as a binary `.agg` file at `output_path`. **Does not run
+    /// the merge loop** — call [`train_from_aggregate`] (or any number
+    /// of times, with different vocab sizes) once the file exists.
+    ///
+    /// `pre_tokenizer`, `pattern`, `special_tokens`, and `buffer_size`
+    /// have the same semantics as in [`train_from_iterator`]. The pre-
+    /// tokenizer spec and special tokens are stamped into the `.agg` file
+    /// so a downstream `train_from_aggregate` can reconstruct the same
+    /// configuration.
+    ///
+    /// On success, the receiver's pre-tokenizer, pattern, and special-
+    /// token registry are updated to match the aggregation config — so
+    /// the same `Tokenizer` instance can be passed to
+    /// `train_from_aggregate` afterwards if desired.
+    #[pyo3(signature = (iterator, output_path, buffer_size=8192, pattern=None, pre_tokenizer=None, special_tokens=None))]
+    #[pyo3(
+        text_signature = "(self, iterator, output_path, buffer_size=8192, pattern=None, pre_tokenizer=None, special_tokens=None)"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    pub fn aggregate(
+        &mut self,
+        py: pyo3::Python<'_>,
+        iterator: &pyo3::Bound<'_, pyo3::PyAny>,
+        output_path: &str,
+        buffer_size: usize,
+        pattern: Option<String>,
+        pre_tokenizer: Option<String>,
+        special_tokens: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        if pattern.is_some() && pre_tokenizer.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "pass either `pattern` (legacy) or `pre_tokenizer` (new), not both",
+            ));
+        }
+        let (pre, pattern_str, spec_canonical): (Box<dyn PreTokenizer>, String, String) =
+            if let Some(spec) = pre_tokenizer {
+                parse_pretokenizer_spec(&spec)?
+            } else if let Some(pat) = pattern {
+                let r = RegexPreTokenizer::new(&pat).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("invalid regex pattern: {}", e))
+                })?;
+                let canonical = format!("regex:{}", pat);
+                (Box::new(r), pat, canonical)
+            } else {
+                parse_pretokenizer_spec("gpt4")?
+            };
+
+        self.pattern = pattern_str.clone();
+        self.compiled_pattern = Regex::new(&pattern_str).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
+        })?;
+        self.specials = SpecialTokenRegistry::new();
+        if let Some(toks) = special_tokens {
+            for t in toks {
+                self.specials.add(t).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("special token: {}", e))
+                })?;
+            }
+        }
+
+        let (counts, stats) =
+            aggregate_into_counts(py, iterator, buffer_size, pre.as_ref(), &self.specials)?;
+
+        // Build the file. Sort canonically before writing so two runs over
+        // the same input produce byte-identical files.
+        let mut agg = AggregateFile {
+            version: crate::aggregate::AGG_VERSION as u32,
+            pre_tokenizer_config: spec_canonical,
+            pattern: pattern_str.clone(),
+            special_tokens: self.specials.tokens().to_vec(),
+            chunks: counts
+                .into_iter()
+                .map(|(s, c)| (s.as_bytes().to_vec(), c))
+                .collect(),
+            total_bytes_processed: stats.total_bytes_processed,
+            total_chunks_with_multiplicity: stats.total_chunks_with_multiplicity,
+        };
+        agg.sort_canonical();
+
+        let path: PathBuf = PathBuf::from(output_path);
+        agg_file::write_to_file(&path, &agg).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!(
+                "failed to write .agg file {:?}: {}",
+                path, e
+            ))
+        })?;
+        log::info!(
+            "wrote {:?}: {} unique chunks, {} total bytes processed",
+            path,
+            agg.unique_chunks(),
+            agg.total_bytes_processed
+        );
+
+        // Save the pipeline so the same `Tokenizer` instance can run
+        // `train_from_aggregate` next without reconstructing it.
+        self.pre_tokenizer = Some(pre);
+        Ok(())
+    }
+
+    /// Run the merge loop against an `.agg` file and produce a trained
+    /// tokenizer.
+    ///
+    /// The pre-tokenizer config and special tokens stored inside the
+    /// `.agg` file are restored on `self`, so encode after this call
+    /// uses the same pipeline that produced the aggregation. Override
+    /// `merge_mode` and `min_frequency` per call; running this multiple
+    /// times against the same `.agg` is the intended way to sweep
+    /// vocab sizes.
+    #[pyo3(signature = (agg_path, vocab_size, min_frequency=1, merge_mode=None))]
+    #[pyo3(text_signature = "(self, agg_path, vocab_size, min_frequency=1, merge_mode=None)")]
+    pub fn train_from_aggregate(
+        &mut self,
+        agg_path: &str,
+        vocab_size: u32,
+        min_frequency: i64,
+        merge_mode: Option<String>,
+    ) -> PyResult<()> {
+        let path = PathBuf::from(agg_path);
+        let agg = agg_file::read_from_file(&path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!(
+                "failed to read .agg file {:?}: {}",
+                path, e
+            ))
+        })?;
+        log::info!(
+            "loaded {:?}: {} unique chunks, pre_tokenizer={:?}, {} specials",
+            path,
+            agg.unique_chunks(),
+            agg.pre_tokenizer_config,
+            agg.special_tokens.len()
+        );
+
+        // Reconstruct the pre-tokenizer pipeline from the canonical spec.
+        let (pre, pattern_str, _) = parse_pretokenizer_spec(&agg.pre_tokenizer_config)?;
+        self.pattern = pattern_str.clone();
+        self.compiled_pattern = Regex::new(&pattern_str).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
+        })?;
+
+        // Restore the special-token registry from the file.
+        self.specials = SpecialTokenRegistry::new();
+        for t in &agg.special_tokens {
+            self.specials.add(t.clone()).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("special token: {}", e))
+            })?;
+        }
+
+        // Materialize + train. Drop the file's `chunks` to free memory
+        // before the merge loop builds its own structures.
+        materialize_and_train(
+            agg.chunks.into_iter(),
+            min_frequency,
+            vocab_size,
+            merge_mode.as_deref(),
+            &mut self.merges,
+        )?;
+
         self.pre_tokenizer = Some(pre);
         Ok(())
     }

@@ -1301,3 +1301,201 @@ def test_merge_mode_scan_with_pre_tokenizer_digits():
     test_text = "the year 2025 has digits 0123456789"
     assert full_tok.encode(test_text) == scan_tok.encode(test_text)
     print("✅ Scan mode + gpt4+digits pre-tokenizer matches Full mode")
+
+
+# =============================================================================
+# Phase separation: .agg file format + aggregate/train_from_aggregate
+#
+# Gating correctness criterion: aggregate(corpus) -> train_from_aggregate
+# must produce byte-identical mergeable_ranks AND byte-identical encode
+# output to single-pass train_from_iterator on the same corpus.
+# =============================================================================
+
+import os, tempfile
+
+def test_aggregate_then_train_matches_single_pass():
+    """The gating test for phase separation."""
+    corpus = [
+        "hello world! the quick brown fox jumps over the lazy dog.",
+        "abracadabra abracadabra",
+        "hello hello world world",
+        "code: def hello(): return 'world'",
+        "the year was 2025",
+    ] * 30
+
+    with tempfile.TemporaryDirectory() as d:
+        agg_path = os.path.join(d, "corpus.agg")
+
+        # Phase-separated: aggregate, then train.
+        tok_phased = wisetok.Tokenizer()
+        tok_phased.aggregate(iter(corpus), agg_path, pre_tokenizer="gpt4+digits")
+        tok_phased.train_from_aggregate(agg_path, vocab_size=400)
+
+        # Single-pass over the same corpus and config.
+        tok_single = wisetok.Tokenizer()
+        tok_single.train_from_iterator(
+            iter(corpus), vocab_size=400, pre_tokenizer="gpt4+digits"
+        )
+
+        phased_ranks = {tuple(b): i for (b, i) in tok_phased.get_mergeable_ranks()}
+        single_ranks = {tuple(b): i for (b, i) in tok_single.get_mergeable_ranks()}
+        assert phased_ranks == single_ranks, (
+            f"phase-separated vs single-pass mergeable_ranks differ: "
+            f"phased {len(phased_ranks)} entries, single {len(single_ranks)} entries"
+        )
+
+        # Encode parity on arbitrary text.
+        for text in [
+            "hello world",
+            "the year 2026 begins",
+            "abracadabra is magic",
+            "",
+            "x",
+        ]:
+            assert tok_phased.encode(text) == tok_single.encode(text), (
+                f"encode diverged for {text!r}: phased={tok_phased.encode(text)}, "
+                f"single={tok_single.encode(text)}"
+            )
+    print("✅ aggregate→train_from_aggregate matches single-pass train_from_iterator")
+
+
+def test_aggregate_then_train_with_special_tokens():
+    """Phase separation must round-trip special tokens via the .agg file."""
+    corpus = [
+        "hello<|endoftext|>world",
+        "code<|fim_prefix|>x<|fim_middle|>y",
+        "plain text repeats here",
+    ] * 30
+
+    specials = ["<|endoftext|>", "<|fim_prefix|>", "<|fim_middle|>"]
+
+    with tempfile.TemporaryDirectory() as d:
+        agg_path = os.path.join(d, "corpus.agg")
+
+        tok_phased = wisetok.Tokenizer()
+        tok_phased.aggregate(iter(corpus), agg_path, special_tokens=specials)
+        tok_phased.train_from_aggregate(agg_path, vocab_size=350)
+
+        tok_single = wisetok.Tokenizer()
+        tok_single.train_from_iterator(
+            iter(corpus), vocab_size=350, special_tokens=specials
+        )
+
+        # Same merges.
+        phased_ranks = {tuple(b): i for (b, i) in tok_phased.get_mergeable_ranks()}
+        single_ranks = {tuple(b): i for (b, i) in tok_single.get_mergeable_ranks()}
+        assert phased_ranks == single_ranks
+
+        # Specials must be restored on the trained tokenizer from the .agg file.
+        assert tok_phased.get_special_tokens() == specials
+
+        # Encode parity, including atomic special handling.
+        text = "hello<|endoftext|>code<|fim_prefix|>x"
+        assert tok_phased.encode(text) == tok_single.encode(text)
+    print("✅ phase separation round-trips special tokens correctly")
+
+
+def test_aggregate_can_be_trained_at_multiple_vocab_sizes():
+    """Same .agg file → multiple vocab sizes. Merges of a smaller vocab must
+    be a prefix of a larger vocab (the BPE algorithm is monotonic)."""
+    corpus = ["hello world " * 50, "the quick brown fox " * 50] * 10
+
+    with tempfile.TemporaryDirectory() as d:
+        agg_path = os.path.join(d, "corpus.agg")
+
+        tok = wisetok.Tokenizer()
+        tok.aggregate(iter(corpus), agg_path)
+
+        small = wisetok.Tokenizer()
+        small.train_from_aggregate(agg_path, vocab_size=280)
+
+        big = wisetok.Tokenizer()
+        big.train_from_aggregate(agg_path, vocab_size=350)
+
+        # The small tokenizer's mergeable ranks (>=256 entries) should be a
+        # prefix of the big tokenizer's, because both ran the same BPE on
+        # the same chunk counts and just stopped at different vocab sizes.
+        small_ranks = small.get_mergeable_ranks()
+        big_ranks = big.get_mergeable_ranks()
+        assert len(small_ranks) <= len(big_ranks)
+        for i in range(len(small_ranks)):
+            assert small_ranks[i] == big_ranks[i], (
+                f"prefix mismatch at index {i}: small={small_ranks[i]}, big={big_ranks[i]}"
+            )
+    print("✅ multiple train_from_aggregate calls share the BPE prefix invariant")
+
+
+def test_aggregate_file_round_trips_min_frequency_in_merge_phase():
+    """min_frequency is applied at merge time, not aggregation time. So the
+    same .agg file with different min_frequency should behave the same as
+    single-pass train with that min_frequency."""
+    corpus = ["hello world " * 50, "rare phrase happens once"]
+
+    with tempfile.TemporaryDirectory() as d:
+        agg_path = os.path.join(d, "corpus.agg")
+
+        tok_a = wisetok.Tokenizer()
+        tok_a.aggregate(iter(corpus), agg_path)
+        tok_a.train_from_aggregate(agg_path, vocab_size=300, min_frequency=2)
+
+        tok_b = wisetok.Tokenizer()
+        tok_b.train_from_iterator(iter(corpus), vocab_size=300, min_frequency=2)
+
+        a_ranks = {tuple(b): i for (b, i) in tok_a.get_mergeable_ranks()}
+        b_ranks = {tuple(b): i for (b, i) in tok_b.get_mergeable_ranks()}
+        assert a_ranks == b_ranks
+    print("✅ min_frequency works through the .agg path identically")
+
+
+def test_aggregate_pattern_and_pre_tokenizer_mutually_exclusive():
+    tok = wisetok.Tokenizer()
+    with tempfile.TemporaryDirectory() as d:
+        with pytest.raises(ValueError, match="either"):
+            tok.aggregate(
+                iter(["x"]),
+                os.path.join(d, "x.agg"),
+                pattern="\\w+",
+                pre_tokenizer="gpt4",
+            )
+    print("✅ aggregate rejects passing both pattern and pre_tokenizer")
+
+
+def test_train_from_aggregate_rejects_nonexistent_file():
+    tok = wisetok.Tokenizer()
+    with pytest.raises(IOError):
+        tok.train_from_aggregate("/nonexistent/path/x.agg", vocab_size=300)
+    print("✅ train_from_aggregate raises IOError on missing file")
+
+
+def test_train_from_aggregate_rejects_bad_magic():
+    """A non-.agg file with the wrong magic should produce a clear error."""
+    tok = wisetok.Tokenizer()
+    with tempfile.NamedTemporaryFile(suffix=".agg", delete=False) as f:
+        f.write(b"NOT_WISETOK_AGG_FILE")
+        path = f.name
+    try:
+        with pytest.raises(IOError, match="not a wisetok .agg file"):
+            tok.train_from_aggregate(path, vocab_size=300)
+    finally:
+        os.unlink(path)
+    print("✅ train_from_aggregate rejects files with bad magic")
+
+
+def test_aggregate_merge_mode_scan_matches_single_pass_scan():
+    """Phase separation + merge_mode='scan' must equal single-pass scan."""
+    corpus = ["hello world " * 30, "the quick brown fox " * 30] * 5
+
+    with tempfile.TemporaryDirectory() as d:
+        agg_path = os.path.join(d, "corpus.agg")
+
+        tok_phased = wisetok.Tokenizer()
+        tok_phased.aggregate(iter(corpus), agg_path)
+        tok_phased.train_from_aggregate(agg_path, vocab_size=320, merge_mode="scan")
+
+        tok_single = wisetok.Tokenizer()
+        tok_single.train_from_iterator(iter(corpus), vocab_size=320, merge_mode="scan")
+
+        phased_ranks = {tuple(b): i for (b, i) in tok_phased.get_mergeable_ranks()}
+        single_ranks = {tuple(b): i for (b, i) in tok_single.get_mergeable_ranks()}
+        assert phased_ranks == single_ranks
+    print("✅ phase separation composes with merge_mode='scan'")

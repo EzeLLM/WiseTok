@@ -6,6 +6,7 @@
 //! (composable pre-tokenizers, special tokens, min_frequency, HuggingFace
 //! export, phase separation, validation suite, CLI) on top.
 
+pub mod aggregate;
 pub mod export;
 pub(crate) mod merge;
 pub mod pretokenizer;
