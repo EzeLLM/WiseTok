@@ -10,6 +10,7 @@ pub mod export;
 pub(crate) mod merge;
 pub mod pretokenizer;
 pub mod python;
+pub mod special_tokens;
 
 /// `(left_id, right_id)` — the canonical key for BPE merges.
 pub type Pair = (u32, u32);
