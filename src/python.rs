@@ -10,7 +10,7 @@ use fancy_regex::Regex;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
-use crate::merge::{train_core_incremental, Word};
+use crate::merge::{resolve_mode, train_core, MergeMode, Word};
 use crate::pretokenizer::{DigitSplitter, PreTokenizer, RegexPreTokenizer, SequencePreTokenizer};
 use crate::special_tokens::{Segment, SpecialTokenRegistry};
 use crate::{Pair, GPT4_PATTERN};
@@ -128,9 +128,17 @@ impl Tokenizer {
     /// before the merge loop runs. `min_frequency=1` keeps every chunk
     /// (legacy default; same as upstream rustbpe). Higher values shrink the
     /// word table at the cost of dropping rare chunks from training.
-    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None))]
+    ///
+    /// `merge_mode` selects the merge-loop data structure:
+    ///   - `"full"`  — upstream rustbpe behavior; fast but O(N × L) RAM peak.
+    ///   - `"scan"`  — drop the positions map; one parallel scan per merge.
+    ///                 Bounded RAM, slightly slower per merge.
+    ///   - `"auto"`  — pick `scan` when unique-word count exceeds 1M, else
+    ///                 `full`. This is the default.
+    /// All modes produce byte-identical merge tables on the same input.
+    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None, merge_mode=None))]
     #[pyo3(
-        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None)"
+        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1, pre_tokenizer=None, special_tokens=None, merge_mode=None)"
     )]
     #[allow(clippy::too_many_arguments)]
     pub fn train_from_iterator(
@@ -143,6 +151,7 @@ impl Tokenizer {
         min_frequency: i64,
         pre_tokenizer: Option<String>,
         special_tokens: Option<Vec<String>>,
+        merge_mode: Option<String>,
     ) -> PyResult<()> {
         // Resolve the pre-tokenizer pipeline. The legacy `pattern` argument
         // and the new `pre_tokenizer` spec are mutually exclusive — let the
@@ -305,7 +314,30 @@ impl Tokenizer {
             );
         }
 
-        train_core_incremental(&mut words, &cvec, vocab_size, &mut self.merges);
+        // Resolve merge mode. Default `Auto`. Strings are case-insensitive.
+        let mode = match merge_mode.as_deref() {
+            None => MergeMode::Auto,
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "full" => MergeMode::Full,
+                "scan" => MergeMode::Scan,
+                "auto" => MergeMode::Auto,
+                other => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "unknown merge_mode {:?}; supported: \"full\", \"scan\", \"auto\"",
+                        other
+                    )));
+                }
+            },
+        };
+        let resolved = resolve_mode(mode, words.len());
+        log::info!(
+            "merge_mode = {:?} (resolved from {:?}, unique_words = {})",
+            resolved,
+            mode,
+            words.len()
+        );
+
+        train_core(&mut words, &cvec, vocab_size, &mut self.merges, resolved);
 
         // Store the pipeline for later encode() calls.
         self.pre_tokenizer = Some(pre);

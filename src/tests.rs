@@ -8,7 +8,10 @@ use ahash::AHashSet;
 use fancy_regex::Regex;
 
 use crate::export::tiktoken::mergeable_ranks;
-use crate::merge::{count_pairs_parallel, train_core_incremental, MergeJob, Word};
+use crate::merge::{
+    count_pairs_parallel, train_core_incremental, train_core_scan, MergeJob, Word,
+    AUTO_SCAN_THRESHOLD,
+};
 use crate::special_tokens::SpecialTokenRegistry;
 use crate::{Pair, Tokenizer};
 
@@ -420,4 +423,168 @@ fn test_merge_job_ord() {
     };
     // Same count, ascending pair order: (1,2) wins over (3,4).
     assert!(c > d);
+}
+
+// -----------------------------------------------------------------------
+// MergeMode parity: Full and Scan must produce byte-identical merge
+// tables on the same input. This is the gating correctness criterion
+// for the memory-bounded merge mode (Iteration 2). If these tests
+// diverge, the scan implementation is wrong — fix it before shipping.
+// -----------------------------------------------------------------------
+
+/// Run both Full and Scan modes on the same fixture and assert the two
+/// `merges` maps are byte-for-byte equal (same pairs, same `new_id`s).
+fn assert_modes_agree(words_init: Vec<Word>, counts: Vec<i64>, vocab_size: u32) {
+    let mut words_full = words_init.clone();
+    let mut merges_full: StdHashMap<Pair, u32> = StdHashMap::new();
+    train_core_incremental(&mut words_full, &counts, vocab_size, &mut merges_full);
+
+    let mut words_scan = words_init.clone();
+    let mut merges_scan: StdHashMap<Pair, u32> = StdHashMap::new();
+    train_core_scan(&mut words_scan, &counts, vocab_size, &mut merges_scan);
+
+    assert_eq!(
+        merges_full, merges_scan,
+        "Full and Scan produced different merge tables\nFull: {:?}\nScan: {:?}",
+        merges_full, merges_scan
+    );
+
+    // The post-merge `words` arrays must also match exactly: same lengths
+    // and same id sequences. This catches any divergence in how the two
+    // modes traversed the words during merge_pair application.
+    assert_eq!(
+        words_full.len(),
+        words_scan.len(),
+        "word vector lengths diverged"
+    );
+    for (i, (wf, ws)) in words_full.iter().zip(words_scan.iter()).enumerate() {
+        assert_eq!(
+            wf.ids, ws.ids,
+            "word index {} diverged between Full and Scan: {:?} vs {:?}",
+            i, wf.ids, ws.ids
+        );
+    }
+}
+
+#[test]
+fn test_modes_agree_single_pair() {
+    // The "ab" repeated 10 times, "cd" 5 times fixture from
+    // test_train_core_incremental.
+    let words = vec![Word::new(vec![97, 98]), Word::new(vec![99, 100])];
+    let counts: Vec<i64> = vec![10, 5];
+    assert_modes_agree(words, counts, 257);
+}
+
+#[test]
+fn test_modes_agree_chained_merges() {
+    // "aaa" forces a chained merge: first (97,97)→256, then (256,97)→257.
+    let words = vec![Word::new(vec![97, 97, 97])];
+    let counts: Vec<i64> = vec![10];
+    assert_modes_agree(words, counts, 258);
+}
+
+#[test]
+fn test_modes_agree_overlapping_repeats() {
+    // "aaaa" exercises the non-overlapping replacement logic and
+    // forces deltas with both removed-and-recreated pairs.
+    let words = vec![
+        Word::new(vec![97, 97, 97, 97]),
+        Word::new(vec![97, 97, 97, 97, 97]),
+        Word::new(vec![98, 97, 97, 99]),
+    ];
+    let counts: Vec<i64> = vec![3, 2, 1];
+    assert_modes_agree(words, counts, 260);
+}
+
+#[test]
+fn test_modes_agree_diverse_corpus() {
+    // Several distinct words with shared bytes. Forces the heap to
+    // make non-trivial decisions across competing pairs.
+    let words = vec![
+        Word::new(b"hello".iter().map(|&b| b as u32).collect()),
+        Word::new(b"world".iter().map(|&b| b as u32).collect()),
+        Word::new(b"hello world".iter().map(|&b| b as u32).collect()),
+        Word::new(b"abracadabra".iter().map(|&b| b as u32).collect()),
+        Word::new(b"the quick brown fox".iter().map(|&b| b as u32).collect()),
+        Word::new(
+            b"jumped over the lazy dog"
+                .iter()
+                .map(|&b| b as u32)
+                .collect(),
+        ),
+    ];
+    let counts: Vec<i64> = vec![100, 80, 50, 30, 20, 10];
+    assert_modes_agree(words, counts, 320);
+}
+
+#[test]
+fn test_modes_agree_tied_counts() {
+    // Two pairs with equal frequency. Tie-break must be deterministic
+    // across modes — ascending pair order. Mismatch here would indicate
+    // ScanJob::cmp doesn't match MergeJob::cmp.
+    let words = vec![Word::new(vec![1, 2, 3, 4]), Word::new(vec![5, 6, 7, 8])];
+    let counts: Vec<i64> = vec![10, 10];
+    assert_modes_agree(words, counts, 260);
+}
+
+#[test]
+fn test_modes_agree_zero_count_word_skipped() {
+    // A word with count==0 must be skipped by both modes.
+    let words = vec![
+        Word::new(vec![97, 98]),
+        Word::new(vec![99, 100]), // count=0, must contribute nothing
+    ];
+    let counts: Vec<i64> = vec![5, 0];
+    assert_modes_agree(words, counts, 257);
+}
+
+#[test]
+fn test_modes_agree_vocab_exhausts_pairs() {
+    // Request more merges than there are unique pairs available. Both
+    // modes must terminate cleanly with the same partial merges map.
+    let words = vec![Word::new(vec![97, 98])];
+    let counts: Vec<i64> = vec![10];
+    assert_modes_agree(words, counts, 300);
+}
+
+#[test]
+fn test_modes_agree_singleton_words_skipped() {
+    // Words of length < 2 produce no pairs in either mode.
+    let words = vec![
+        Word::new(vec![97]),
+        Word::new(vec![]),
+        Word::new(vec![98, 99, 100]),
+    ];
+    let counts: Vec<i64> = vec![100, 50, 10];
+    assert_modes_agree(words, counts, 258);
+}
+
+#[test]
+fn test_resolve_mode_auto() {
+    use crate::merge::{resolve_mode, MergeMode};
+    assert_eq!(resolve_mode(MergeMode::Auto, 0), MergeMode::Full);
+    assert_eq!(
+        resolve_mode(MergeMode::Auto, AUTO_SCAN_THRESHOLD),
+        MergeMode::Full
+    );
+    assert_eq!(
+        resolve_mode(MergeMode::Auto, AUTO_SCAN_THRESHOLD + 1),
+        MergeMode::Scan
+    );
+    // Explicit modes pass through.
+    assert_eq!(resolve_mode(MergeMode::Full, 999_999_999), MergeMode::Full);
+    assert_eq!(resolve_mode(MergeMode::Scan, 0), MergeMode::Scan);
+}
+
+#[test]
+fn test_scan_with_zero_words() {
+    // Empty input — both modes must produce empty merges.
+    let mut words: Vec<Word> = vec![];
+    let counts: Vec<i64> = vec![];
+    let mut merges_full: StdHashMap<Pair, u32> = StdHashMap::new();
+    let mut merges_scan: StdHashMap<Pair, u32> = StdHashMap::new();
+    train_core_incremental(&mut words.clone(), &counts, 300, &mut merges_full);
+    train_core_scan(&mut words, &counts, 300, &mut merges_scan);
+    assert!(merges_full.is_empty());
+    assert!(merges_scan.is_empty());
 }

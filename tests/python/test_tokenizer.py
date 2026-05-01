@@ -1128,3 +1128,176 @@ def test_special_tokens_hf_export_uses_registered_specials():
             f"wisetok={wise_ids}, hf={hf_ids}"
         )
     print(f"✅ save_huggingface uses registered specials; HF encode matches wisetok encode")
+
+
+# =============================================================================
+# MergeMode parity tests (Iteration 2 — memory-bounded merge mode)
+#
+# The gating correctness criterion: training the same corpus with merge_mode=
+# "full" and merge_mode="scan" must produce byte-identical merge tables and
+# byte-identical encode output for arbitrary text. If these tests diverge,
+# the scan implementation is wrong — fix before shipping.
+# =============================================================================
+
+def _train_with_mode(corpus, vocab_size, mode, **extra):
+    """Train a fresh wisetok.Tokenizer on `corpus` with the given merge_mode.
+    Returns the trained tokenizer."""
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator(
+        iter(corpus),
+        vocab_size=vocab_size,
+        merge_mode=mode,
+        **extra,
+    )
+    return tok
+
+
+def _mergeable_ranks_dict(tok):
+    """Return a (token_bytes, id) → tuple list, normalized to a dict for
+    comparison."""
+    ranks = tok.get_mergeable_ranks()
+    return {tuple(b): i for (b, i) in ranks}
+
+
+def test_merge_mode_full_and_scan_produce_identical_merges():
+    """Gating test for the memory-bounded merge mode.
+
+    Trains the same corpus with merge_mode="full" and merge_mode="scan".
+    The mergeable_ranks must be byte-identical (same token bytes mapped to
+    the same IDs in the same order)."""
+    corpus = [
+        "hello world! the quick brown fox jumps over the lazy dog.",
+        "hello, world! how are you doing today?",
+        "the quick brown fox is quick.",
+        "abracadabra abracadabra abracadabra",
+        "hello hello hello world world",
+        "code: def hello(): return 'world'",
+        "numbers: 123 456 789 12 34 56",
+        "the the the the and and and or or",
+    ] * 20  # repeat to give merges plenty of frequency signal
+
+    full_tok = _train_with_mode(corpus, vocab_size=400, mode="full")
+    scan_tok = _train_with_mode(corpus, vocab_size=400, mode="scan")
+
+    full_ranks = _mergeable_ranks_dict(full_tok)
+    scan_ranks = _mergeable_ranks_dict(scan_tok)
+
+    assert full_ranks == scan_ranks, (
+        f"Full and Scan produced different mergeable_ranks.\n"
+        f"  full has {len(full_ranks)} entries, scan has {len(scan_ranks)}.\n"
+        f"  full-only: {set(full_ranks) - set(scan_ranks)}\n"
+        f"  scan-only: {set(scan_ranks) - set(full_ranks)}"
+    )
+
+    # And the actual encode outputs must match for arbitrary text.
+    test_texts = [
+        "hello world",
+        "the quick brown fox",
+        "abracadabra is a magic word",
+        "what about completely unseen text 999",
+        "",
+        "a",
+    ]
+    for text in test_texts:
+        full_ids = full_tok.encode(text)
+        scan_ids = scan_tok.encode(text)
+        assert full_ids == scan_ids, (
+            f"encode diverged for {text!r}: full={full_ids}, scan={scan_ids}"
+        )
+    print(f"✅ Full and Scan produced identical merges + encode on {len(corpus)} sequences")
+
+
+def test_merge_mode_auto_resolves_to_full_for_small_corpus():
+    """Auto on a small corpus picks Full. The output must equal explicit Full."""
+    corpus = ["hello world " * 50, "the quick brown fox " * 50]
+
+    auto_tok = _train_with_mode(corpus, vocab_size=300, mode="auto")
+    full_tok = _train_with_mode(corpus, vocab_size=300, mode="full")
+
+    assert _mergeable_ranks_dict(auto_tok) == _mergeable_ranks_dict(full_tok)
+    print("✅ merge_mode='auto' on a small corpus matches explicit 'full'")
+
+
+def test_merge_mode_default_is_auto_and_matches_full():
+    """No explicit merge_mode arg should be the same as merge_mode='auto'.
+    On a small corpus that resolves to Full, so it must equal explicit Full."""
+    corpus = ["hello world " * 50, "the quick brown fox " * 50]
+
+    default_tok = _train_with_mode(corpus, vocab_size=300, mode=None)
+    full_tok = _train_with_mode(corpus, vocab_size=300, mode="full")
+
+    assert _mergeable_ranks_dict(default_tok) == _mergeable_ranks_dict(full_tok)
+    print("✅ default merge_mode matches 'full' on a small corpus (auto threshold not hit)")
+
+
+def test_merge_mode_invalid_value_raises():
+    """Unrecognized merge_mode strings must produce a clear ValueError."""
+    tok = wisetok.Tokenizer()
+    with pytest.raises(ValueError, match="unknown merge_mode"):
+        tok.train_from_iterator(
+            iter(["hello world"] * 10),
+            vocab_size=300,
+            merge_mode="bogus",
+        )
+    print("✅ invalid merge_mode raises ValueError")
+
+
+def test_merge_mode_case_insensitive():
+    """merge_mode strings are case-insensitive: 'FULL', 'Scan', etc. all work."""
+    corpus = ["hello world " * 30]
+
+    a = _train_with_mode(corpus, vocab_size=300, mode="FULL")
+    b = _train_with_mode(corpus, vocab_size=300, mode="full")
+    assert _mergeable_ranks_dict(a) == _mergeable_ranks_dict(b)
+
+    c = _train_with_mode(corpus, vocab_size=300, mode="Scan")
+    d = _train_with_mode(corpus, vocab_size=300, mode="scan")
+    assert _mergeable_ranks_dict(c) == _mergeable_ranks_dict(d)
+    print("✅ merge_mode is case-insensitive")
+
+
+def test_merge_mode_scan_with_special_tokens():
+    """Scan mode must compose correctly with special tokens (which split
+    text before BPE applies). Result must equal Full mode on the same input."""
+    corpus = [
+        "hello<|endoftext|>world",
+        "the quick brown<|fim_prefix|>fox<|fim_middle|>jumps",
+        "hello world hello world",
+    ] * 30
+
+    full_tok = _train_with_mode(
+        corpus,
+        vocab_size=350,
+        mode="full",
+        special_tokens=["<|endoftext|>", "<|fim_prefix|>", "<|fim_middle|>"],
+    )
+    scan_tok = _train_with_mode(
+        corpus,
+        vocab_size=350,
+        mode="scan",
+        special_tokens=["<|endoftext|>", "<|fim_prefix|>", "<|fim_middle|>"],
+    )
+
+    assert _mergeable_ranks_dict(full_tok) == _mergeable_ranks_dict(scan_tok)
+
+    # Encode with specials present in the input must match across modes too.
+    text = "hello<|endoftext|>code<|fim_prefix|>x"
+    assert full_tok.encode(text) == scan_tok.encode(text)
+    print("✅ Scan mode + special tokens matches Full mode")
+
+
+def test_merge_mode_scan_with_pre_tokenizer_digits():
+    """Scan mode must compose with the digit-splitting pre-tokenizer too."""
+    corpus = [
+        "the year was 2025 and counting",
+        "phone: 555-123-4567",
+        "pi is approximately 3.14159265",
+    ] * 50
+
+    full_tok = _train_with_mode(corpus, vocab_size=320, mode="full", pre_tokenizer="gpt4+digits")
+    scan_tok = _train_with_mode(corpus, vocab_size=320, mode="scan", pre_tokenizer="gpt4+digits")
+
+    assert _mergeable_ranks_dict(full_tok) == _mergeable_ranks_dict(scan_tok)
+    test_text = "the year 2025 has digits 0123456789"
+    assert full_tok.encode(test_text) == scan_tok.encode(test_text)
+    print("✅ Scan mode + gpt4+digits pre-tokenizer matches Full mode")
