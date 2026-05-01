@@ -741,3 +741,80 @@ def test_batch_encode_performance(enwik8_large):
     # Warn if speedup is low (can vary by machine/load)
     if speedup < 1.5:
         warnings.warn(f"batch_encode() speedup was only {speedup:.2f}x (expected >1.5x)")
+
+
+def test_min_frequency_default_is_lossless():
+    """min_frequency=1 (default) must produce identical merges to leaving it unset."""
+    text = "the quick brown fox " * 200 + "rare ! 7" * 1
+    vocab_size = 280
+
+    a = wisetok.Tokenizer()
+    a.train_from_iterator([text], vocab_size=vocab_size)
+
+    b = wisetok.Tokenizer()
+    b.train_from_iterator([text], vocab_size=vocab_size, min_frequency=1)
+
+    assert a.encode(text) == b.encode(text), "min_frequency=1 should be a no-op vs default"
+    print("✅ min_frequency=1 matches default")
+
+
+def test_min_frequency_drops_rare_chunks():
+    """A rare chunk's bytes should not contribute pairs to the merge map
+    when min_frequency exceeds its count."""
+    # Use a unique sentinel chunk "QXZ" that appears once and is composed of
+    # bytes that don't appear anywhere else in the corpus. With
+    # min_frequency=10, "QXZ" should be dropped, so no merge should involve
+    # any of its bytes.
+    common = "hello world " * 100
+    rare = "QXZ"  # Q=0x51, X=0x58, Z=0x5A — none appear in "hello world "
+    text = common + rare
+
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator([text], vocab_size=320, min_frequency=10)
+
+    # Sanity: those bytes do not occur in the common text.
+    for b in rare.encode("utf-8"):
+        assert chr(b) not in common, f"byte {b!r} leaked into common text"
+
+    # Inspect the trained vocab: no merged token should contain Q/X/Z bytes.
+    for token_bytes, token_id in tok.get_mergeable_ranks():
+        if token_id < 256:
+            continue  # base byte tokens are irrelevant
+        rare_bytes = set(rare.encode("utf-8"))
+        if any(b in rare_bytes for b in token_bytes):
+            raise AssertionError(
+                f"merge {token_id} ({bytes(token_bytes)!r}) contains a byte "
+                f"from the rare chunk; min_frequency filtering failed"
+            )
+    print("✅ min_frequency=10 dropped the rare chunk's pairs from the merge map")
+
+
+def test_min_frequency_smaller_corpus_yields_smaller_vocab_or_equal():
+    """High min_frequency reduces the unique-chunk pool, which can cap the
+    achievable vocab size when the merge loop runs out of pairs."""
+    text = ("kw " * 5) + ("filler word " * 200)
+    requested_vocab = 320
+
+    keep = wisetok.Tokenizer()
+    keep.train_from_iterator([text], vocab_size=requested_vocab, min_frequency=5)
+
+    drop = wisetok.Tokenizer()
+    drop.train_from_iterator([text], vocab_size=requested_vocab, min_frequency=6)
+
+    # Both must be valid (no panics, no errors). The drop run had a smaller
+    # input corpus, so its vocab can be ≤ keep's. Both stay above the 256
+    # base-byte floor.
+    assert 256 <= drop.vocab_size <= keep.vocab_size <= requested_vocab
+    print(f"✅ min_frequency monotonicity: vocab(min_freq=6)={drop.vocab_size} "
+          f"≤ vocab(min_freq=5)={keep.vocab_size} ≤ {requested_vocab}")
+
+
+def test_min_frequency_roundtrip():
+    """A tokenizer trained with min_frequency must still round-trip text correctly."""
+    text = "the quick brown fox jumps over the lazy dog. " * 50
+    tok = wisetok.Tokenizer()
+    tok.train_from_iterator([text], vocab_size=300, min_frequency=5)
+
+    sample = "the quick brown fox"
+    assert tok.decode(tok.encode(sample)) == sample
+    print("✅ min_frequency tokenizer round-trips correctly")

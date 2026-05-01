@@ -46,8 +46,15 @@ impl Tokenizer {
     /// Train from a streaming iterator (parallel ingestion).
     /// We refill a Rust `Vec<String>` buffer under the GIL, then release the
     /// GIL to do the heavy splitting and counting **in parallel** with rayon.
-    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None))]
-    #[pyo3(text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None)")]
+    ///
+    /// `min_frequency` drops chunks that occurred fewer than this many times
+    /// before the merge loop runs. `min_frequency=1` keeps every chunk
+    /// (legacy default; same as upstream rustbpe). Higher values shrink the
+    /// word table at the cost of dropping rare chunks from training.
+    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1))]
+    #[pyo3(
+        text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None, min_frequency=1)"
+    )]
     pub fn train_from_iterator(
         &mut self,
         py: pyo3::Python<'_>,
@@ -55,6 +62,7 @@ impl Tokenizer {
         vocab_size: u32,
         buffer_size: usize,
         pattern: Option<String>,
+        min_frequency: i64,
     ) -> PyResult<()> {
         // Use provided pattern or default to GPT-4 pattern.
         let pattern_str = pattern.unwrap_or_else(|| GPT4_PATTERN.to_string());
@@ -155,14 +163,26 @@ impl Tokenizer {
             counts.len()
         );
 
-        // Materialize words & counts.
-        let mut words = Vec::with_capacity(counts.len());
-        let mut cvec = Vec::with_capacity(counts.len());
+        // Materialize words & counts, applying min_frequency.
+        let total_unique = counts.len();
+        let mut words = Vec::with_capacity(total_unique);
+        let mut cvec = Vec::with_capacity(total_unique);
         for (chunk, c) in counts.into_iter() {
+            if c < min_frequency {
+                continue;
+            }
             words.push(Word::new(
                 chunk.as_bytes().iter().map(|&b| b as u32).collect(),
             ));
             cvec.push(c);
+        }
+        if min_frequency > 1 {
+            log::info!(
+                "min_frequency={} filtered {} → {} unique chunks",
+                min_frequency,
+                total_unique,
+                words.len()
+            );
         }
 
         train_core_incremental(&mut words, &cvec, vocab_size, &mut self.merges);
