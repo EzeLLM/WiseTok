@@ -11,8 +11,8 @@ encode with each tokenizer, and report:
     5. LaTeX table block ready to drop into a paper.
 
 Tokenizers covered:
-    - WiseTok v1 (24K, 32GB Python-focused corpus)
-    - WiseTok v2 (24K, 142GB multi-domain corpus)
+    - All WiseTok runs auto-discovered under the repo, ~/wisetok-runs, or
+      WISETOK_BENCH_DIRS (use --local-tokenizer NAME=path to add specific files).
     - SmolLM2 (49K)
     - StarCoder2 (49K)
     - DeepSeek-Coder (32K)
@@ -28,6 +28,8 @@ Usage:
     python scripts/run_benchmark.py --csv path/to/results.csv --latex path/to/table.tex
     python scripts/run_benchmark.py --skip-claude     # never call the Claude API
     python scripts/run_benchmark.py --skip-hf         # local-only, no HF downloads
+    python scripts/run_benchmark.py --local-tokenizer my-tok=/path/to/tokenizer.json
+    WISETOK_BENCH_DIRS=/data/runs1:/data/runs2 python scripts/run_benchmark.py
 
 The Anthropic API path is rate-limited and costs money. We make at most
 N_CATEGORIES requests per Claude model. Set CLAUDE_MODELS env var to override.
@@ -42,13 +44,15 @@ import sys
 import time
 from pathlib import Path
 
-V1 = "/media/data1tb/ezellm-coder-tokenizer/wisetok-production/tokenizer.json"
-V2 = "/media/data1tb/ezellm-coder-tokenizer/wisetok-production-v2/tokenizer.json"
-
-# (display_name, kind, identifier, vocab_declared)
-TOKENIZERS_LOCAL = [
-    ("WiseTok v2 (24K, 142GB)", "local", V2, 24_576),
-    ("WiseTok v1 (24K, 32GB)",  "local", V1, 24_576),
+# Local WiseTok runs are auto-discovered (see discover_local_runs below).
+# Override or extend with `--local-tokenizer NAME=path/to/tokenizer.json` (repeatable),
+# or with `WISETOK_BENCH_DIRS=dir1:dir2:...` to add custom search roots.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_LOCAL_SEARCH_ROOTS = [
+    REPO_ROOT,
+    REPO_ROOT.parent,                    # sibling sandbox dirs (e.g. ../wisetok-runs)
+    Path.home() / "wisetok-runs",
+    Path("/media/data1tb/ezellm-coder-tokenizer"),  # legacy WiseTok dev box
 ]
 
 TOKENIZERS_TIKTOKEN = [
@@ -131,6 +135,98 @@ def geomean(xs: list[float]) -> float:
     return math.exp(sum(math.log(x) for x in xs) / len(xs)) if xs else 0.0
 
 
+# ----------------------------------------------------------------- discovery
+def _vocab_size_from_json(path: Path) -> int | None:
+    """Best-effort vocab-size read from a tokenizer.json without loading the full tokenizer."""
+    try:
+        import json
+        with path.open() as f:
+            cfg = json.load(f)
+    except Exception:
+        return None
+    model = cfg.get("model") or {}
+    vocab = model.get("vocab") or {}
+    n_model = len(vocab) if isinstance(vocab, dict) else 0
+    n_added = len(cfg.get("added_tokens") or [])
+    total = n_model + n_added
+    return total or None
+
+
+def _short_label(tok_path: Path, vocab: int | None) -> str:
+    """Build a stable display label from the tokenizer's parent dir name."""
+    name = tok_path.parent.name or tok_path.stem
+    # Trim wisetok-prefixed run dirs to the distinguishing tail.
+    if name.lower().startswith("wisetok-"):
+        name = name[len("wisetok-"):]
+    if vocab:
+        return f"WiseTok {name} ({vocab // 1000}K)"
+    return f"WiseTok {name}"
+
+
+def discover_local_runs(extra_roots: list[Path], explicit: list[str]) -> list[tuple[str, str, str, int]]:
+    """Find local WiseTok tokenizer.json files.
+
+    Search order:
+      1. `--local-tokenizer NAME=path` flags (explicit, never deduped away).
+      2. Each root in `DEFAULT_LOCAL_SEARCH_ROOTS + extra_roots`: scan up to depth 3
+         for files named `tokenizer.json`. We require a sibling `tiktoken.bpe` *or*
+         `tokenizer_config.json` so we don't pick up unrelated HF caches.
+
+    Results are sorted by vocab size (descending). Duplicates by realpath are dropped.
+    Returns: list of (display_name, "local", path_str, vocab_size).
+    """
+    out: list[tuple[str, str, str, int]] = []
+    seen: set[str] = set()
+
+    # 1) explicit
+    for spec in explicit:
+        if "=" in spec:
+            name, _, path_str = spec.partition("=")
+            name = name.strip()
+            path = Path(path_str.strip()).expanduser()
+        else:
+            path = Path(spec).expanduser()
+            name = ""
+        if not path.is_file():
+            print(f"  [warn] --local-tokenizer not found: {path}", file=sys.stderr)
+            continue
+        real = str(path.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
+        v = _vocab_size_from_json(path) or 0
+        label = name or _short_label(path, v)
+        out.append((label, "local", str(path), v))
+
+    # 2) auto-discovery
+    roots = list(DEFAULT_LOCAL_SEARCH_ROOTS) + extra_roots
+    for root in roots:
+        if not root or not root.exists():
+            continue
+        try:
+            # bounded depth: root, depth1, depth2, depth3 == 3 levels of glob
+            patterns = ["tokenizer.json", "*/tokenizer.json", "*/*/tokenizer.json"]
+            for pat in patterns:
+                for path in root.glob(pat):
+                    if not path.is_file():
+                        continue
+                    parent = path.parent
+                    # require a wisetok-style sibling so we don't ingest stray HF caches
+                    if not ((parent / "tiktoken.bpe").exists() or (parent / "tokenizer_config.json").exists()):
+                        continue
+                    real = str(path.resolve())
+                    if real in seen:
+                        continue
+                    seen.add(real)
+                    v = _vocab_size_from_json(path) or 0
+                    out.append((_short_label(path, v), "local", str(path), v))
+        except (PermissionError, OSError):
+            continue
+
+    out.sort(key=lambda r: -r[3])
+    return out
+
+
 # ------------------------------------------------------------------- main
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -140,6 +236,11 @@ def main() -> int:
     p.add_argument("--skip-hf",       action="store_true", help="Skip HF tokenizers")
     p.add_argument("--skip-tiktoken", action="store_true", help="Skip tiktoken (GPT) tokenizers")
     p.add_argument("--skip-claude",   action="store_true", help="Skip Claude API even if key is set")
+    p.add_argument("--local-tokenizer", action="append", default=[], metavar="NAME=PATH",
+                   help="Add a local tokenizer.json (repeatable). NAME= prefix optional.")
+    p.add_argument("--local-search-root", action="append", default=[], metavar="DIR",
+                   help="Extra directory to scan for tokenizer.json (repeatable). "
+                        "Also accepts WISETOK_BENCH_DIRS env var (':' separator).")
     p.add_argument("--max-claude-chars", type=int, default=200_000,
                    help="Truncate categories above this size when calling Claude API (cost cap)")
     args = p.parse_args()
@@ -173,8 +274,22 @@ def main() -> int:
     for name, _, nf, nc in categories:
         print(f"  {name:20s} {nf:>3d} files, {nc:>10,d} chars")
 
+    # --- Discover local WiseTok runs -------------------------------------
+    extra_roots = [Path(d).expanduser() for d in args.local_search_root]
+    env_dirs = os.environ.get("WISETOK_BENCH_DIRS", "")
+    if env_dirs:
+        extra_roots += [Path(d).expanduser() for d in env_dirs.split(":") if d]
+    local_runs = discover_local_runs(extra_roots, args.local_tokenizer)
+    if local_runs:
+        print(f"\nDiscovered {len(local_runs)} local WiseTok tokenizer(s):")
+        for tn, _, path, vocab in local_runs:
+            print(f"  {tn:32s} vocab={vocab:>7,d}  {path}")
+    else:
+        print("\nNo local WiseTok runs found. Use --local-tokenizer NAME=path/tokenizer.json "
+              "or set WISETOK_BENCH_DIRS to add search roots.")
+
     # --- Build tokenizer list --------------------------------------------
-    plan = list(TOKENIZERS_LOCAL)
+    plan = list(local_runs)
     if not args.skip_tiktoken:
         plan += TOKENIZERS_TIKTOKEN
     if not args.skip_hf:
@@ -276,6 +391,11 @@ def main() -> int:
     cat_chars = {c: nc for c, _, _, nc in categories}
     toks_in = [tn for tn, *_ in all_loaded]
 
+    # Headline = the largest local (WiseTok) tokenizer that successfully loaded.
+    # Highlighted with "←" in per-category and macro views.
+    local_loaded = [(tn, vocab) for tn, kind, _, vocab in all_loaded if kind == "local"]
+    headline_name = max(local_loaded, key=lambda r: r[1])[0] if local_loaded else None
+
     # Macro geomean per tokenizer
     macro: dict[str, float] = {}
     for tn in toks_in:
@@ -373,7 +493,7 @@ def main() -> int:
         rows = [(tn, *results[(tn, c)]) for tn in toks_in if (tn, c) in results]
         rows.sort(key=lambda r: -r[2])
         for rank, (tn, nt, cpt, dt) in enumerate(rows, 1):
-            mark = "  ←" if "WiseTok v2" in tn else ""
+            mark = "  ←" if headline_name and tn == headline_name else ""
             print(f"  {rank:2d}. {tn:30s} {nt:>10,d} tok  {cpt:>7.3f} c/tok  ({dt:.2f}s){mark}")
 
     # --- Macro summary ---------------------------------------------------
@@ -384,7 +504,7 @@ def main() -> int:
     for rank, (tn, m) in enumerate(rows_macro, 1):
         vocab = next(v for n, _, _, v in all_loaded if n == tn)
         v_str = f"{vocab:,}" if vocab > 0 else "?"
-        mark = "  ←" if "WiseTok v2" in tn else ""
+        mark = "  ←" if headline_name and tn == headline_name else ""
         print(f"  {rank:2d}. {tn:30s} vocab={v_str:>10s}  macro c/tok = {m:.4f}{mark}")
 
     # --- CSV dump --------------------------------------------------------
