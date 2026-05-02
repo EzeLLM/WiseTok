@@ -1,0 +1,22 @@
+Brussels Tightens AI Export Controls Amid Rising Geopolitical Tensions
+
+By Sarah Mitchell, Senior Policy Correspondent
+Published March 15, 2024 — Updated 14:42 UTC
+
+BRUSSELS — The European Commission announced sweeping new restrictions on artificial intelligence exports Friday, citing national security concerns and the need to maintain technological sovereignty in an increasingly fractious global order. The directive targets 47 countries and regions, with immediate effect on semiconductor shipments and software licensing agreements.
+
+"We cannot allow critical infrastructure to be compromised by adversaries," said Commissioner Thierry Breton during a press conference at the Berlaymont building. "This is not protectionism—it is prudent stewardship of our technological assets."
+
+The new controls mark a dramatic shift from Brussels' historically open trade posture. According to European Council data released Thursday, exports of advanced AI systems have surged 312% in the past 18 months, with China and Russia as primary recipients through intermediaries. The Commission estimates the restrictions will reduce unregulated exports by $8.7 billion annually.
+
+The timing aligns with growing pressure from Washington. Last month, U.S. State Department official Michael Chen testified before Congress that European export loopholes had enabled hostile state actors to acquire dual-use technology. "Our NATO allies must enforce consistent standards," Chen stated in prepared remarks filed with the Senate Committee on Foreign Relations.
+
+Industry groups have already begun circulating concerns. The European Digital Industries Association warned that restrictions could devastate competitive positioning. "We compete with American and Chinese companies on global markets," said President Klaus Hoffmann at a Brussels conference Tuesday. "Unilateral controls without reciprocal agreements will only cede market share to less scrupulous competitors."
+
+The measure requires unanimous approval from all 27 EU member states, a process expected to conclude by May 2024. Hungary and Slovenia have signaled support, though Poland raised technical questions about implementation. The European Parliament is scheduled to debate the directive on March 22.
+
+European banks have begun pricing in potential trade retaliation. The DAX declined 1.8% Friday on the news, while the FTSE rose 0.3%. Analysts attribute the divergence to sectoral exposure—German manufacturing faces higher export headwinds than the financial services that dominate London trading.
+
+The Commission will establish an enforcement bureau in Luxembourg with authority to inspect export shipments and audit licensing records. Violations carry penalties of up to €15 million per violation or 8% of annual revenue, whichever is larger.
+
+A second phase of controls is under consideration for Q4 2024, potentially expanding restrictions to 23 additional nations and tightening domestic licensing requirements.

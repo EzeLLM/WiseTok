@@ -1,0 +1,681 @@
+// Component Styles - SCSS/Sass with Advanced Features
+
+// ============================================================================
+// VARIABLES
+// ============================================================================
+
+$base-font-size: 16px;
+$line-height: 1.6;
+
+// Spacing Scale
+$spacing-unit: 1rem;
+$spacing-xs: $spacing-unit * 0.25;
+$spacing-sm: $spacing-unit * 0.5;
+$spacing-md: $spacing-unit;
+$spacing-lg: $spacing-unit * 1.5;
+$spacing-xl: $spacing-unit * 2;
+$spacing-2xl: $spacing-unit * 3;
+
+// Colors
+$color-primary: #0066cc;
+$color-primary-hover: #0052a3;
+$color-secondary: #f0f4f8;
+$color-success: #22c55e;
+$color-warning: #eab308;
+$color-error: #ef4444;
+$color-text: #1f2937;
+$color-text-light: #6b7280;
+$color-border: #e5e7eb;
+$color-background: #ffffff;
+
+// Typography
+$font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+$font-family-mono: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+
+$font-size-xs: 0.75rem;
+$font-size-sm: 0.875rem;
+$font-size-base: 1rem;
+$font-size-lg: 1.125rem;
+$font-size-xl: 1.25rem;
+$font-size-2xl: 1.5rem;
+$font-size-3xl: 2rem;
+
+$font-weight-normal: 400;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+
+// Border Radius
+$border-radius-sm: 0.25rem;
+$border-radius-md: 0.5rem;
+$border-radius-lg: 1rem;
+
+// Transitions
+$transition-fast: 150ms ease-in-out;
+$transition-normal: 300ms ease-in-out;
+$transition-slow: 500ms ease-in-out;
+
+// Shadows
+$shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+$shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+$shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+// Z-index
+$z-index-dropdown: 1000;
+$z-index-sticky: 1020;
+$z-index-fixed: 1030;
+$z-index-modal-backdrop: 1040;
+$z-index-modal: 1050;
+
+// ============================================================================
+// MIXINS
+// ============================================================================
+
+@mixin flex-center($direction: row) {
+  display: flex;
+  flex-direction: $direction;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+@mixin position-absolute-cover {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+@mixin button-base {
+  display: inline-block;
+  padding: $spacing-sm $spacing-lg;
+  border: none;
+  border-radius: $border-radius-md;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: $font-weight-semibold;
+  cursor: pointer;
+  transition: all $transition-fast;
+  text-decoration: none;
+  text-align: center;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: $shadow-md;
+  }
+
+  &:active {
+    transform: translateY(0);
+    box-shadow: $shadow-sm;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  &:focus {
+    outline: 2px solid $color-primary;
+    outline-offset: 2px;
+  }
+}
+
+@mixin input-base {
+  width: 100%;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid $color-border;
+  border-radius: $border-radius-md;
+  font-family: inherit;
+  font-size: inherit;
+  transition: border-color $transition-fast, box-shadow $transition-fast;
+
+  &:focus {
+    outline: none;
+    border-color: $color-primary;
+    box-shadow: 0 0 0 3px rgba($color-primary, 0.1);
+  }
+
+  &:disabled {
+    background-color: #f5f5f5;
+    color: $color-text-light;
+    cursor: not-allowed;
+  }
+}
+
+@mixin responsive-padding($mobile: 1rem, $tablet: 1.5rem, $desktop: 2rem) {
+  padding: $mobile;
+
+  @media (min-width: 768px) {
+    padding: $tablet;
+  }
+
+  @media (min-width: 1024px) {
+    padding: $desktop;
+  }
+}
+
+@mixin clearfix {
+  &::after {
+    content: '';
+    display: table;
+    clear: both;
+  }
+}
+
+@mixin truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@mixin line-clamp($lines: 2) {
+  display: -webkit-box;
+  -webkit-line-clamp: $lines;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+// ============================================================================
+// FUNCTIONS
+// ============================================================================
+
+@function spacing($multiplier) {
+  @return $spacing-unit * $multiplier;
+}
+
+@function color-lighten($color, $amount: 10%) {
+  @return lighten($color, $amount);
+}
+
+@function color-darken($color, $amount: 10%) {
+  @return darken($color, $amount);
+}
+
+// ============================================================================
+// BUTTONS
+// ============================================================================
+
+.btn {
+  @include button-base;
+  background-color: $color-primary;
+  color: white;
+
+  &:hover {
+    background-color: $color-primary-hover;
+  }
+
+  &--secondary {
+    background-color: $color-secondary;
+    color: $color-text;
+
+    &:hover {
+      background-color: darken($color-secondary, 5%);
+    }
+  }
+
+  &--success {
+    background-color: $color-success;
+    color: white;
+
+    &:hover {
+      background-color: darken($color-success, 10%);
+    }
+  }
+
+  &--warning {
+    background-color: $color-warning;
+    color: #000;
+
+    &:hover {
+      background-color: darken($color-warning, 10%);
+    }
+  }
+
+  &--error {
+    background-color: $color-error;
+    color: white;
+
+    &:hover {
+      background-color: darken($color-error, 10%);
+    }
+  }
+
+  &--small {
+    padding: $spacing-xs $spacing-md;
+    font-size: $font-size-sm;
+  }
+
+  &--large {
+    padding: $spacing-md $spacing-xl;
+    font-size: $font-size-lg;
+  }
+
+  &--full-width {
+    width: 100%;
+  }
+
+  &--icon {
+    padding: $spacing-sm;
+    width: 40px;
+    height: 40px;
+    @include flex-center;
+  }
+}
+
+// ============================================================================
+// FORMS
+// ============================================================================
+
+.form {
+  &__group {
+    margin-bottom: $spacing-lg;
+
+    &--inline {
+      display: flex;
+      gap: $spacing-md;
+      align-items: flex-end;
+
+      .form__control {
+        flex: 1;
+      }
+    }
+  }
+
+  &__label {
+    display: block;
+    margin-bottom: $spacing-sm;
+    font-weight: $font-weight-semibold;
+    color: $color-text;
+  }
+
+  &__control {
+    @include input-base;
+
+    &--error {
+      border-color: $color-error;
+    }
+
+    &--success {
+      border-color: $color-success;
+    }
+  }
+
+  &__hint {
+    font-size: $font-size-sm;
+    color: $color-text-light;
+    margin-top: $spacing-xs;
+  }
+
+  &__error {
+    font-size: $font-size-sm;
+    color: $color-error;
+    margin-top: $spacing-xs;
+  }
+}
+
+textarea.form__control {
+  resize: vertical;
+  min-height: 120px;
+}
+
+// ============================================================================
+// CARDS
+// ============================================================================
+
+.card {
+  background-color: $color-background;
+  border: 1px solid $color-border;
+  border-radius: $border-radius-lg;
+  padding: $spacing-lg;
+  box-shadow: $shadow-sm;
+  transition: all $transition-normal;
+
+  &:hover {
+    box-shadow: $shadow-md;
+    transform: translateY(-2px);
+  }
+
+  &__header {
+    border-bottom: 1px solid $color-border;
+    padding-bottom: $spacing-md;
+    margin-bottom: $spacing-md;
+  }
+
+  &__title {
+    font-size: $font-size-xl;
+    font-weight: $font-weight-bold;
+    margin: 0;
+  }
+
+  &__subtitle {
+    font-size: $font-size-sm;
+    color: $color-text-light;
+    margin: 0;
+  }
+
+  &__body {
+    margin-bottom: $spacing-md;
+  }
+
+  &__footer {
+    border-top: 1px solid $color-border;
+    padding-top: $spacing-md;
+    margin-top: $spacing-md;
+    @include flex-between;
+  }
+}
+
+// ============================================================================
+// BADGES AND LABELS
+// ============================================================================
+
+.badge {
+  display: inline-block;
+  padding: $spacing-xs $spacing-md;
+  border-radius: $border-radius-sm;
+  font-size: $font-size-xs;
+  font-weight: $font-weight-bold;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+
+  &--primary {
+    background-color: $color-primary;
+    color: white;
+  }
+
+  &--success {
+    background-color: lighten($color-success, 30%);
+    color: darken($color-success, 20%);
+  }
+
+  &--warning {
+    background-color: lighten($color-warning, 30%);
+    color: darken($color-warning, 30%);
+  }
+
+  &--error {
+    background-color: lighten($color-error, 30%);
+    color: darken($color-error, 20%);
+  }
+}
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+.alert {
+  padding: $spacing-lg;
+  border-radius: $border-radius-md;
+  margin-bottom: $spacing-lg;
+  border-left: 4px solid;
+
+  @each $type, $color in (
+    'info': $color-primary,
+    'success': $color-success,
+    'warning': $color-warning,
+    'error': $color-error
+  ) {
+    &--#{$type} {
+      border-color: $color;
+      background-color: lighten($color, 40%);
+      color: darken($color, 20%);
+
+      a {
+        color: darken($color, 10%);
+        text-decoration: underline;
+      }
+    }
+  }
+
+  &__close {
+    float: right;
+    background: none;
+    border: none;
+    font-size: $font-size-lg;
+    cursor: pointer;
+    padding: 0;
+    color: inherit;
+  }
+}
+
+// ============================================================================
+// NAVIGATION
+// ============================================================================
+
+.nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  @include flex-between;
+  gap: $spacing-md;
+
+  &__item {
+    position: relative;
+  }
+
+  &__link {
+    display: block;
+    padding: $spacing-md $spacing-lg;
+    color: $color-text;
+    text-decoration: none;
+    transition: color $transition-fast;
+    border-bottom: 2px solid transparent;
+
+    &:hover {
+      color: $color-primary;
+    }
+
+    &--active {
+      color: $color-primary;
+      border-bottom-color: $color-primary;
+    }
+  }
+}
+
+// ============================================================================
+// PAGINATION
+// ============================================================================
+
+.pagination {
+  @include flex-center(row);
+  gap: $spacing-sm;
+  margin: $spacing-lg 0;
+
+  &__item {
+    a, span {
+      display: block;
+      padding: $spacing-sm $spacing-md;
+      border: 1px solid $color-border;
+      border-radius: $border-radius-md;
+      text-decoration: none;
+      color: $color-text;
+      transition: all $transition-fast;
+    }
+
+    a:hover {
+      background-color: $color-primary;
+      color: white;
+      border-color: $color-primary;
+    }
+  }
+
+  &__item--active {
+    a, span {
+      background-color: $color-primary;
+      color: white;
+      border-color: $color-primary;
+    }
+  }
+
+  &__item--disabled {
+    a, span {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+}
+
+// ============================================================================
+// GRID AND LAYOUT
+// ============================================================================
+
+.grid {
+  display: grid;
+  gap: $spacing-lg;
+
+  @each $cols in 1, 2, 3, 4, 6 {
+    &--cols-#{$cols} {
+      grid-template-columns: repeat(#{$cols}, 1fr);
+    }
+  }
+
+  @media (max-width: 768px) {
+    @each $cols in 1, 2, 3, 4, 6 {
+      &--cols-#{$cols} {
+        grid-template-columns: repeat(min(#{$cols}, 2), 1fr);
+      }
+    }
+  }
+
+  @media (max-width: 480px) {
+    &--cols-1, &--cols-2, &--cols-3, &--cols-4, &--cols-6 {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+// ============================================================================
+// TYPOGRAPHY
+// ============================================================================
+
+.text {
+  &--primary {
+    color: $color-primary;
+  }
+
+  &--secondary {
+    color: $color-text-light;
+  }
+
+  &--success {
+    color: $color-success;
+  }
+
+  &--error {
+    color: $color-error;
+  }
+
+  &--truncate {
+    @include truncate;
+  }
+
+  &--clamp-2 {
+    @include line-clamp(2);
+  }
+
+  &--clamp-3 {
+    @include line-clamp(3);
+  }
+
+  &--small {
+    font-size: $font-size-sm;
+  }
+
+  &--large {
+    font-size: $font-size-lg;
+  }
+
+  &--bold {
+    font-weight: $font-weight-bold;
+  }
+
+  &--uppercase {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  &--center {
+    text-align: center;
+  }
+}
+
+// ============================================================================
+// ANIMATIONS
+// ============================================================================
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate {
+  &--fadeIn {
+    animation: fadeIn $transition-normal ease-in-out;
+  }
+
+  &--slideInLeft {
+    animation: slideInLeft $transition-normal ease-out;
+  }
+
+  &--slideInRight {
+    animation: slideInRight $transition-normal ease-out;
+  }
+
+  &--slideInUp {
+    animation: slideInUp $transition-normal ease-out;
+  }
+
+  &--pulse {
+    animation: pulse 2s ease-in-out infinite;
+  }
+}
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

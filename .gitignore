@@ -1,32 +1,100 @@
-# Rust build output
-target/
+# =========================================================================
+#  WiseTok .gitignore
+#
+#  Tracked roots:
+#    src/, tests/, scripts/, benchmark/, research/, *.toml, *.md, *.py
+#  Untracked roots (regenerable / ephemeral):
+#    target/, runs/, dist/, wheels/, .venv/, .claude/
+# =========================================================================
 
-# Python-generated files
+# --- Rust build output -----------------------------------------------------
+target/
+Cargo.lock.bak
+
+# --- Python build / packaging ----------------------------------------------
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
 build/
 dist/
 wheels/
 *.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
 
-# Virtual environments
+# --- Virtualenvs / Conda / direnv ------------------------------------------
 .venv/
+venv/
+env/
+.envrc
 
-# IDE
+# --- Test / coverage caches ------------------------------------------------
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- Editors / IDEs --------------------------------------------------------
 .idea/
 .vscode/
 *.swp
 *.swo
+*.swn
+*.bak
+*~
 
-# OS
+# --- OS junk ---------------------------------------------------------------
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# Test cache
-.pytest_cache/
-.cache/
+# --- Notebooks (checkpoints, but keep .ipynb itself) -----------------------
+.ipynb_checkpoints/
 
-# Ignore dir for various dev files and artifacts
+# --- Claude Code internal state --------------------------------------------
+.claude/
+
+# --- Local scratchpad ------------------------------------------------------
 ignore/
 
-# Claude Code internal state (agent worktrees, etc.)
-.claude/
+# =========================================================================
+#  WiseTok-specific: training & benchmark ephemera
+# =========================================================================
+#
+# `runs/` is fully ephemeral: training/benchmark outputs, logs, scratch
+# scripts. Anything reproducible that we want to track lives in `scripts/`,
+# `benchmark/`, or top-level docs — never in `runs/`.
+
+runs/
+
+# Per-iteration artifacts that may accidentally land at the repo root
+*.agg
+*.tiktoken.bpe
+
+# Trained tokenizers (large; produced by `wisetok train`). Reference
+# checkpoints belong on Hugging Face Hub or release artifacts, not in git.
+wisetok-production/
+wisetok-production-*/
+tokenizer-v*/
+
+# Per-run progress logs we sometimes drop next to the binary
+*.log
+!benchmark/results/*.log
+
+# =========================================================================
+#  Secrets / credentials — never commit
+# =========================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.toml
+.anthropic_api_key
+.huggingface_token

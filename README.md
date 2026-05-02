@@ -1,136 +1,105 @@
-# wisetok
+# WiseTok
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**A BPE tokenizer trainer that doesn't OOM.**
 
-> Production BPE tokenizer trainer for LLMs
+Train a GPT-style BPE tokenizer on **142 GB** of text. **Peak RSS: 28.24 GB.** Single consumer machine.
 
-`wisetok` is a fork of [karpathy/rustbpe](https://github.com/karpathy/rustbpe) (MIT, copyright (c) Andrej Karpathy). It keeps rustbpe's proven core — streaming chunk aggregation, the lazy-refresh max-heap merge loop, byte-level BPE on the 256-byte alphabet, parallel pre-tokenization with rayon, and Python bindings via PyO3 — and adds the production features needed to train tokenizers for serious code LLMs.
+HuggingFace `tokenizers` OOMs on 35 GB with 780 GB of RAM available. This bug has been [open since 2020](https://github.com/huggingface/tokenizers/issues/422). WiseTok fixes it.
 
-The project is in active development. Today the public API matches upstream rustbpe (with package and module renamed to `wisetok`). The new features (digit splitter, special tokens, `min_frequency`, HuggingFace export, `.agg` phase separation, RAM-bounded aggregation, parquet input, validation suite, CLI) are being added in iterations.
+![WiseTok peak RSS vs corpus size](docs/img/scaling.png)
 
-## Features (today)
+---
 
-- Fast training with parallel pre-tokenization (rayon)
-- GPT-4-style regex splitter by default; custom regex supported
-- Byte-level BPE: every input byte 0x00–0xFF is in the initial vocabulary
-- Direct export to `tiktoken` format for fast inference
-- Python bindings (PyO3 0.27) with proper GIL release in hot paths
-- Parallel batch encode
+## The five-year-old bug
 
-## Features (planned)
+Open issues on `huggingface/tokenizers`:
 
-- Composable pre-tokenizers (regex + digit splitter, etc.)
-- Special tokens with reserved IDs (e.g., `<|endoftext|>`, FIM tokens)
-- `min_frequency` cutoff to drop rare chunks before merging
-- HuggingFace `tokenizer.json` export for `AutoTokenizer.from_pretrained`
-- Phase separation via `.agg` files (aggregate once, train many)
-- RSS-bounded streaming aggregation with adaptive flush
-- CLI (`wisetok train`, `wisetok validate`)
-- Parquet input via the `arrow` crate
-- Validation suite (roundtrip, whitespace coverage, vocab composition)
+- **[#1681](https://github.com/huggingface/tokenizers/issues/1681) (Nov 2024)** — 20 GB of text. **2 TB of RAM.** OOM at the merge phase. The user asks how OpenAI and HuggingFace train their own tokenizers at scale. No answer.
+- **[#1546](https://github.com/huggingface/tokenizers/issues/1546) (Jun 2024)** — 35 GB / 15M docs on **780 GB RAM**. OOM after 1+ hour, in the merge phase.
+- **[#994](https://github.com/huggingface/tokenizers/issues/994) (May 2022)** — dozens of GB on ~180 GB RAM. OOM. Repost of an issue from 2020.
+- **[#655](https://github.com/huggingface/tokenizers/issues/655) (Mar 2021)** — 187 GB Spanish text on 500 GB RAM. Could only ingest 250 of 5,500 files before OOM.
+- **[#422](https://github.com/huggingface/tokenizers/issues/422) (Sep 2020)** — 5.1 GB Japanese Wikipedia on 64 GB RAM. OOM.
 
-See `Spec.md` for the full design and `AUDIT_REPORT.md` for the gap analysis against upstream rustbpe.
+Five years. Corpus sizes from 5 GB to 187 GB. Machines from 64 GB to 2 TB. Same crash. Either you have access to OpenAI/Meta-tier internal tooling, or you subsample your data and accept a worse tokenizer.
 
-## Installation
+## What WiseTok does
 
-### From source
+WiseTok solves this with a **scan-based merge mode**.
 
-```bash
-git clone https://github.com/EzeLLM/WiseTok.git
-cd WiseTok
-uv venv && source .venv/bin/activate
-uv pip install maturin
-maturin develop --release
-```
+Standard BPE trainers keep an inverted index mapping every symbol pair to every word that contains it, so each merge can be applied in O(affected words). That index is what blows up your RAM — it grows with **unique pre-tokens × pre-token length**, not with available RAM.
 
-## Usage
+WiseTok drops the index. When a winning pair is selected, we do one linear pass over the (deduplicated, count-aggregated) word table to find and apply it. You trade some per-merge speed for **bounded memory**. Output is **byte-identical** to the indexed mode — same merge order, same merge table, same tokenizer.
 
-### Training
+## It scales with unique words, not corpus size
 
-```python
-import wisetok
+Two real runs on the same consumer machine, same vocab size (24,320 merges):
 
-tokenizer = wisetok.Tokenizer()
-tokenizer.train_from_iterator(
-    ["your", "training", "texts", "here"],
-    vocab_size=4096,
-)
+|              | v1          | v2              |
+| ------------ | ----------- | --------------- |
+| Corpus       | 32.8 GB     | **142 GB**      |
+| Unique words | 26.3 M      | 98.0 M          |
+| Aggregation  | 14 min      | 67 min          |
+| Merge        | 22 min      | 91 min          |
+| **Total**    | 36 min      | **2h 43m**      |
+| **Peak RSS** | **7.35 GB** | **28.24 GB**    |
+| Merges       | 24,320      | 24,320          |
 
-ids = tokenizer.encode("hello world")
-text = tokenizer.decode(ids)
-print(tokenizer.vocab_size)  # 4096
+Corpus grew 4.3×. Unique words grew 3.7×. **Peak RSS grew 3.8×** — RAM scales with vocabulary work, not corpus size. That's exactly the property HF tokenizers loses when it adds the positions index. Both runs would OOM HF tokenizers on the same hardware (96 GB).
 
-all_ids = tokenizer.batch_encode(["text one", "text two", "text three"])
-```
+## The tokenizer is actually good
 
-### Export to tiktoken
+A **24K-vocab** WiseTok tokenizer trained on the 142 GB corpus, vs `tiktoken`'s `cl100k` (GPT-3.5/4, 100K vocab) and `o200k` (GPT-4o, 200K vocab). Higher chars/token = better compression.
 
-```python
-import wisetok
-import tiktoken
+| Category         | WiseTok 24K | cl100k 100K | o200k 200K |
+| ---------------- | ----------- | ----------- | ---------- |
+| C                | 2.84        | 3.51        | 3.49       |
+| C++              | 3.16        | 4.01        | 3.93       |
+| Java             | 3.99        | 5.05        | 4.78       |
+| JavaScript       | 3.14        | 3.95        | 3.86       |
+| Python (general) | 3.68        | 4.44        | 4.41       |
+| Math/Python      | 2.63        | 3.11        | 3.10       |
+| Markdown         | 3.12        | 3.80        | 3.82       |
+| Prose            | 3.66        | 4.56        | 4.64       |
+| HTML/CSS         | 2.67        | 3.41        | 3.40       |
 
-tokenizer = wisetok.Tokenizer()
-tokenizer.train_from_iterator(open("corpus.txt"), vocab_size=8192)
+WiseTok 24K runs **within 12–25% of cl100k on most code categories** — with a **4× smaller vocabulary**. Prose lags more (3.66 vs 4.56) because the corpus is code-heavy by design; tokenizer quality on a category tracks data mix, not the algorithm.
 
-enc = tiktoken.Encoding(
-    name="my_tokenizer",
-    pat_str=tokenizer.get_pattern(),
-    mergeable_ranks={bytes(k): v for k, v in tokenizer.get_mergeable_ranks()},
-    special_tokens={},
-)
+The point isn't that a 24K WiseTok beats `cl100k` (it doesn't, and it shouldn't at 1/4 the vocab). The point is that you can now train your **own** tokenizer matched to your **own** data distribution, on a laptop, in under three hours.
 
-ids = enc.encode("hello world")
-```
-
-### Custom regex pattern
-
-```python
-tokenizer.train_from_iterator(
-    texts,
-    vocab_size=4096,
-    pattern=r"[a-zA-Z]+|[0-9]+|\s+",
-)
-```
-
-## API reference (Tokenizer)
-
-| Method | Description |
-|--------|-------------|
-| `Tokenizer()` | Create a new tokenizer |
-| `train_from_iterator(texts, vocab_size, buffer_size=8192, pattern=None)` | Train on an iterator of strings |
-| `encode(text)` | Encode a string to token IDs |
-| `decode(ids)` | Decode token IDs back to a string |
-| `batch_encode(texts)` | Encode multiple strings in parallel |
-| `vocab_size` | Property: 256 + number of merges |
-| `get_pattern()` | Regex pattern used for pre-tokenization |
-| `get_mergeable_ranks()` | Token bytes and ranks for tiktoken export |
-
-## Development
+## Quick start
 
 ```bash
-cargo test                  # Rust tests (33 today)
-pytest tests/python/ -v -s  # Python tests (requires `maturin develop` first)
-cargo fmt --all -- --check
-cargo clippy -- -D warnings
+pip install wisetok
+wisetok train --input corpus/ --vocab-size 50000 --output tokenizer.json
 ```
 
-If `cargo test` fails to find `libpython3.X.so.1.0`, set `LD_LIBRARY_PATH` to your Python lib dir:
+Exports to **`tiktoken`** and **HuggingFace `tokenizer.json`** — drop into `transformers` or `tiktoken`.
 
-```bash
-LD_LIBRARY_PATH=$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))') cargo test
-```
+## Prior work
 
-## How BPE works
+The aggregation idea — running BPE on a frequency dictionary of unique pre-tokens — is from Sennrich et al. (2016), the original BPE paper. Modern trainers kept the aggregation but added a positions index to make merges fast, and that's what made memory unbounded.
 
-1. Start with 256 byte-level tokens (0x00–0xff).
-2. Count all adjacent token pairs in the corpus.
-3. Merge the most frequent pair into a new token.
-4. Repeat until reaching the target vocabulary size.
+- **Sennrich et al. (2016)** — BPE for NLP. Aggregation concept.
+- **[Karpathy's rustbpe](https://github.com/karpathy/rustbpe)** (from nanochat) — the fork base. Fast, correct streaming aggregation in Rust.
+- **Morgan (2024), BatchBPE** — same problem (consumer hardware), pure Python, uses a frequency cutoff to drop rare chunks. Doesn't solve the merge-phase OOM.
+- **Reddy et al. (2025), "How Much is Enough?" (ICML 2025)** — trained BPE on 900 GB by pre-aggregating chunk counts. Code not public.
 
-## Attribution
+Everyone who hit the merge-phase OOM previously either subsampled (Reddy, BatchBPE, SentencePiece's `input_sentence_size`) or had access to a high-memory cluster. WiseTok eliminates the positions index and runs the merge phase in bounded memory regardless of corpus size. If there's prior work that does this, open an issue and I'll cite it.
 
-`wisetok` is a fork of [karpathy/rustbpe](https://github.com/karpathy/rustbpe), MIT-licensed, copyright (c) Andrej Karpathy. The merge loop, lazy-refresh heap, and parallel pre-tokenization are unchanged from upstream. See `LICENSE` for the original MIT terms.
+## What's in WiseTok
+
+WiseTok extends rustbpe with the production pieces needed to train at scale:
+
+- **Scan merge mode** — the headline. Memory-bounded, byte-identical to the indexed mode.
+- **Phase-separated training** — ingest writes a compact `.agg` file; the merge phase streams from disk. Re-train vocabularies without re-scanning the corpus.
+- **HuggingFace `tokenizer.json` export** — full byte-level encoder, drop-in for `transformers`.
+- **`wisetok` CLI** — `train` / `validate`, progress bars, peak-RSS reporting.
+- **Composable pre-tokenizers** — regex / digit-splitting / sequenced pipelines.
+- **Special tokens registry** with code/chat presets, wired through aggregation, encoding, and HF export.
+- **`min_frequency`** filtering in the merge loop.
+- **i32 → i64 counts** — closes a real overflow on multi-billion-pair corpora.
+- **Background RSS sampler** — measured memory claims, not asserted ones.
 
 ## License
 
-MIT
+MIT. Inherits from rustbpe (MIT, © Andrej Karpathy).

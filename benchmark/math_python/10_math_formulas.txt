@@ -1,0 +1,291 @@
+===============================================================================
+Mathematical Formulas and Theorems
+===============================================================================
+
+1. FUNDAMENTAL CALCULUS
+-------------------------------
+
+Derivative Definition:
+    f'(x) = lim(h→0) [f(x+h) - f(x)] / h
+
+Power Rule: d/dx(x^n) = n·x^(n-1)
+
+Chain Rule: d/dx[f(g(x))] = f'(g(x))·g'(x)
+
+Product Rule: d/dx[f(x)·g(x)] = f'(x)·g(x) + f(x)·g'(x)
+
+Fundamental Theorem of Calculus (Part 1):
+    If f is continuous on [a,b] and F'(x) = f(x), then:
+    ∫ₐᵇ f(x) dx = F(b) - F(a)
+
+Integration by Parts:
+    ∫ u dv = uv - ∫ v du
+
+Taylor Series Expansion (around x = a):
+    f(x) = f(a) + f'(a)(x-a) + f''(a)(x-a)²/2! + f'''(a)(x-a)³/3! + ...
+         = Σ(n=0 to ∞) f^(n)(a)·(x-a)^n / n!
+
+L'Hôpital's Rule: lim(x→a) f(x)/g(x) = lim(x→a) f'(x)/g'(x)
+
+
+2. LINEAR ALGEBRA FUNDAMENTALS
+-------------------------------
+
+Matrix Multiplication: If A is m×n and B is n×p, then (AB)ᵢⱼ = Σₖ aᵢₖ·bₖⱼ
+
+Determinant (2×2 matrix):
+    det([a b; c d]) = ad - bc
+
+Eigenvalue Problem:
+    A·v = λ·v, where λ is eigenvalue and v is eigenvector
+
+Trace of Matrix: tr(A) = Σᵢ aᵢᵢ
+
+Spectral Theorem: For symmetric A, ∃ orthonormal eigenvectors that diagonalize A
+
+Singular Value Decomposition: A = U·Σ·V^T
+    where U, V are orthogonal and Σ is diagonal with singular values
+
+QR Decomposition: A = Q·R
+    where Q is orthogonal and R is upper triangular
+
+Rank-Nullity Theorem: rank(A) + nullity(A) = n
+
+
+3. MULTIVARIATE CALCULUS
+-------------------------------
+
+Gradient: ∇f = (∂f/∂x₁, ∂f/∂x₂, ..., ∂f/∂xₙ)
+
+Partial Derivative: ∂f/∂xᵢ = lim(h→0) [f(x₁,...,xᵢ+h,...,xₙ) - f(x)] / h
+
+Divergence: ∇·F = Σᵢ ∂Fᵢ/∂xᵢ
+
+Curl (3D): ∇×F = (∂Fz/∂y - ∂Fy/∂z, ∂Fx/∂z - ∂Fz/∂x, ∂Fy/∂x - ∂Fx/∂y)
+
+Laplacian: ∇²f = Σᵢ ∂²f/∂xᵢ²
+
+Jacobian Matrix:
+    J = [∂f₁/∂x₁  ∂f₁/∂x₂  ...  ∂f₁/∂xₙ]
+        [∂f₂/∂x₁  ∂f₂/∂x₂  ...  ∂f₂/∂xₙ]
+        [⋮        ⋮        ⋱   ⋮       ]
+        [∂fₘ/∂x₁  ∂fₘ/∂x₂  ...  ∂fₘ/∂xₙ]
+
+Hessian Matrix: H = [∂²f/∂xᵢ∂xⱼ]
+
+Second Derivative Test (2D):
+    If Hessian determinant > 0 and ∂²f/∂x² > 0: local minimum
+    If Hessian determinant > 0 and ∂²f/∂x² < 0: local maximum
+    If Hessian determinant < 0: saddle point
+
+
+4. VECTOR CALCULUS & INTEGRATION
+-------------------------------
+
+Line Integral: ∫_C F·dr = ∫ₐᵇ F(r(t))·r'(t) dt
+
+Green's Theorem (2D circulation):
+    ∮_C F·dr = ∫∫_D (∂Q/∂x - ∂P/∂y) dA
+
+Stokes' Theorem (3D circulation):
+    ∮_C F·dr = ∫∫_S (∇×F)·n dS
+
+Divergence Theorem (Gauss's Theorem):
+    ∫∫∫_V ∇·F dV = ∫∫_S F·n dS
+
+Surface Integral: ∫∫_S f(x,y,z) dS = ∫∫_D f(r(u,v)) |∂r/∂u × ∂r/∂v| du dv
+
+Double Integral (Cartesian):
+    ∫∫_D f(x,y) dA = ∫ₐᵇ ∫_{c(x)}^{d(x)} f(x,y) dy dx
+
+Polar Coordinates: x = r·cos(θ), y = r·sin(θ), dA = r dr dθ
+
+
+5. COMPLEX ANALYSIS
+-------------------------------
+
+Complex Number: z = x + iy, where i² = -1
+
+Magnitude (Modulus): |z| = √(x² + y²)
+
+Argument: arg(z) = arctan(y/x) = θ
+
+Euler's Formula: e^(iθ) = cos(θ) + i·sin(θ)
+
+De Moivre's Theorem: (cos(θ) + i·sin(θ))^n = cos(nθ) + i·sin(nθ)
+
+Cauchy-Riemann Equations (for f = u + iv):
+    ∂u/∂x = ∂v/∂y  and  ∂u/∂y = -∂v/∂x
+
+Contour Integral (Cauchy's Integral Formula):
+    f(z₀) = (1/2πi) ∮_C f(z)/(z-z₀) dz
+
+
+6. DIFFERENTIAL EQUATIONS
+-------------------------------
+
+Ordinary Differential Equation (ODE):
+    dy/dt = f(t, y)
+
+Solution Methods:
+
+    Separable: ∫ dy/g(y) = ∫ f(t) dt
+
+    Linear ODE: y' + p(t)y = q(t)
+        Solution: y = e^(-∫p dt) [∫ q·e^(∫p dt) dt + C]
+
+    Second-order linear constant coefficients: ay'' + by' + cy = f(t)
+        Characteristic equation: ar² + br + c = 0
+
+Laplace Transform: L{f(t)} = F(s) = ∫₀^∞ e^(-st) f(t) dt
+
+Fourier Series: f(x) = a₀/2 + Σ(n=1 to ∞) [aₙcos(nx) + bₙsin(nx)]
+    where aₙ = (1/π) ∫₋π^π f(x)cos(nx) dx
+    and   bₙ = (1/π) ∫₋π^π f(x)sin(nx) dx
+
+
+7. PROBABILITY & STATISTICS
+-------------------------------
+
+Expectation: E[X] = ∫_{-∞}^{∞} x·f(x) dx = Σᵢ xᵢ·P(X=xᵢ)
+
+Variance: Var(X) = E[(X - μ)²] = E[X²] - (E[X])²
+
+Standard Deviation: σ = √Var(X)
+
+Covariance: Cov(X,Y) = E[(X-μₓ)(Y-μᵧ)]
+
+Correlation: ρ = Cov(X,Y) / (σₓ·σᵧ), -1 ≤ ρ ≤ 1
+
+Binomial Distribution: P(X=k) = C(n,k)·p^k·(1-p)^(n-k)
+
+Normal Distribution: f(x) = (1/(σ√(2π))) · exp(-(x-μ)²/(2σ²))
+
+Central Limit Theorem: As n→∞, (Σᵢ Xᵢ - nμ)/(σ√n) → N(0,1)
+
+Law of Large Numbers: P(|X̄ₙ - μ| ≥ ε) → 0 as n → ∞
+
+Bayes' Theorem: P(A|B) = P(B|A)·P(A) / P(B)
+
+
+8. OPTIMIZATION
+-------------------------------
+
+Unconstrained Optimization:
+    At minimum: ∇f(x*) = 0 (first-order condition)
+    At local minimum: ∇²f(x*) is positive semi-definite
+
+Constrained Optimization (Lagrange Multipliers):
+    Minimize f(x) subject to g(x) = 0
+    ∇f(x*) = λ·∇g(x*)
+    The Lagrangian: L(x,λ) = f(x) - λ·g(x)
+
+Inequality Constraints (KKT Conditions):
+    If x* minimizes f(x) subject to gᵢ(x) ≤ 0:
+    1. ∇f(x*) + Σᵢ μᵢ·∇gᵢ(x*) = 0 (stationarity)
+    2. μᵢ ≥ 0 for all i (dual feasibility)
+    3. μᵢ·gᵢ(x*) = 0 for all i (complementary slackness)
+
+Gradient Descent Update:
+    xₙ₊₁ = xₙ - α·∇f(xₙ), where α is learning rate
+
+Newton's Method:
+    xₙ₊₁ = xₙ - [∇²f(xₙ)]⁻¹·∇f(xₙ)
+
+
+9. APPROXIMATION THEORY
+-------------------------------
+
+Least Squares Approximation:
+    Given data (tᵢ, yᵢ), minimize Σᵢ (yᵢ - f(tᵢ))²
+    Normal equations: A^T·A·x = A^T·y
+
+Chebyshev Approximation:
+    Minimize max|f(x) - p(x)| over x ∈ [a,b]
+
+Polynomial Interpolation:
+    Lagrange: p(x) = Σⱼ yⱼ·∏ᵢ≠ⱼ (x-xᵢ)/(xⱼ-xᵢ)
+    Newton: p(x) = Σₙ aₙ·∏ᵢ<ₙ (x-xᵢ)
+
+
+10. SPECIAL FUNCTIONS & INEQUALITIES
+-------------------------------
+
+Gamma Function: Γ(n) = (n-1)! for positive integers
+    Γ(n) = ∫₀^∞ t^(n-1)·e^(-t) dt
+
+Beta Function: B(m,n) = ∫₀¹ t^(m-1)·(1-t)^(n-1) dt = Γ(m)·Γ(n)/Γ(m+n)
+
+Error Function: erf(x) = (2/√π) ∫₀^x e^(-t²) dt
+
+Cauchy-Schwarz Inequality: |⟨u,v⟩| ≤ ‖u‖·‖v‖
+
+Triangle Inequality: ‖u+v‖ ≤ ‖u‖ + ‖v‖
+
+Hölder's Inequality: ∫|f·g| ≤ (∫|f|^p)^(1/p) · (∫|g|^q)^(1/q), where 1/p + 1/q = 1
+
+Minkowski's Inequality: ‖f+g‖ₚ ≤ ‖f‖ₚ + ‖g‖ₚ
+
+Arithmetic-Geometric Mean: (a₁ + a₂ + ... + aₙ)/n ≥ (a₁·a₂·...·aₙ)^(1/n)
+
+
+11. NUMERICAL METHODS
+-------------------------------
+
+Newton-Raphson Root Finding:
+    xₙ₊₁ = xₙ - f(xₙ)/f'(xₙ)
+
+Bisection Method:
+    Iteratively narrow interval [a,b] where f(a)·f(b) < 0
+
+Runge-Kutta 4th Order (RK4):
+    yₙ₊₁ = yₙ + (h/6)·(k₁ + 2k₂ + 2k₃ + k₄)
+    where h is step size and kᵢ = f(tₙ + cᵢh, yₙ + aᵢh·Σⱼ bᵢⱼkⱼ)
+
+Finite Difference Approximation:
+    f'(x) ≈ [f(x+h) - f(x-h)]/(2h)  (centered difference, O(h²))
+    f''(x) ≈ [f(x+h) - 2f(x) + f(x-h)]/h²
+
+Simpson's Rule (Numerical Integration):
+    ∫ₐᵇ f(x) dx ≈ (h/3)·[f(x₀) + 4f(x₁) + 2f(x₂) + ... + 4f(xₙ₋₁) + f(xₙ)]
+
+Conjugate Gradient Method:
+    For solving Ax = b where A is positive definite
+    Convergence in at most n iterations
+
+
+12. INFORMATION THEORY
+-------------------------------
+
+Entropy (Shannon): H(X) = -Σᵢ P(xᵢ)·log₂(P(xᵢ)) bits
+
+Cross-Entropy: H(P,Q) = -Σᵢ P(xᵢ)·log₂(Q(xᵢ))
+
+Kullback-Leibler Divergence (KL Divergence):
+    KL(P||Q) = Σᵢ P(xᵢ)·log(P(xᵢ)/Q(xᵢ)) ≥ 0
+
+Mutual Information: I(X;Y) = Σᵢ Σⱼ P(xᵢ,yⱼ)·log[P(xᵢ,yⱼ)/(P(xᵢ)·P(yⱼ))]
+
+Channel Capacity (Shannon): C = max I(X;Y) bits/transmission
+
+
+13. ASYMPTOTIC NOTATION
+-------------------------------
+
+Big O: f(n) = O(g(n)) if ∃ c, n₀ such that 0 ≤ f(n) ≤ c·g(n) ∀ n ≥ n₀
+
+Little o: f(n) = o(g(n)) if lim(n→∞) f(n)/g(n) = 0
+
+Big Theta: f(n) = Θ(g(n)) if f = O(g) and g = O(f)
+
+Big Omega: f(n) = Ω(g(n)) if g = O(f)
+
+Little Omega: f(n) = ω(g(n)) if g = o(f)
+
+Common Growth Rates (increasing):
+    O(1) < O(log n) < O(n) < O(n log n) < O(n²) < O(n³) < O(2^n) < O(n!)
+
+
+===============================================================================
+End of Mathematical Reference
+===============================================================================

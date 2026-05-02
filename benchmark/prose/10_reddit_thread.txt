@@ -1,0 +1,158 @@
+r/HomeImprovement — "Accidentally demolished the wrong wall. It's load-bearing. What do I do?"
+
+Posted by u/HomeDepotNightmare to r/HomeImprovement
+5.2k upvotes | 347 comments | Posted 6 hours ago
+
+---
+
+[POST]
+
+So... I really messed up. Like, catastrophically messed up.
+
+Yesterday morning I decided to remove a wall in my basement to open up the space. The wall is perpendicular to another wall that I explicitly wanted to keep. I'd drawn it on a diagram, circled it in red marker, everything. My contractor (who I hired bc I'm admittedly not handy) showed up and started demoing. I left to run errands.
+
+Came back 4 hours later to find that he'd demolished the WRONG wall. The wall I wanted to keep. The one I explicitly told him not to touch.
+
+Now the ceiling is sagging. Literally visibly sagging. There's a crack running across the drywall in my upstairs bedroom. My wife is furious. My contractor is MIA.
+
+What are my legal options here? Can I sue? What happens if the structure actually fails? Do I need to immediately hire an engineer?
+
+I'm panicking. Help me.
+
+---
+
+[COMMENTS]
+
+> By u/CarpenterDave | Score: 1200 | 4 hours ago
+>
+> You need a structural engineer ASAP. Like, today. Not tomorrow. This is not a DIY situation anymore.
+>
+> Call your local building department and ask for a referral to a structural engineer. Expect to pay $400-800 for an assessment. That's cheap compared to what you're looking at.
+>
+> Your contractor is absolutely liable for this. Get everything in writing. Take photos of everything. If he's licensed, file a complaint with your state licensing board. If he's not licensed, that's a separate problem.
+>
+> Do NOT let anyone live in the upstairs until the engineer gives the all-clear. I'm serious. Sagging ceiling + visible crack = potential structural failure.
+>
+> Sorry man. This is fixable but it's going to be expensive.
+
+> By u/StructuralSteve | Score: 950 | 3 hours ago
+>
+> Structural engineer here. The sagging you're seeing is the framing members trying to accommodate a load they weren't designed to carry. This is urgent.
+>
+> Temporary supports (shore posts) might be needed immediately to prevent further deflection. A permanent solution will likely involve installing a beam, which is a $5-15k job depending on the span and the load.
+>
+> Document everything. Photos, text messages, everything. Your contractor's liability insurance should cover this, but you'll have to file a claim and possibly sue to recover costs.
+>
+> Get the engineer TODAY. The ceiling could fail without warning.
+
+> By u/LawyerDude | Score: 680 | 2 hours ago
+>
+> I'm a construction lawyer (not your lawyer, don't rely on this for legal advice).
+>
+> You likely have several claims against your contractor:
+> 1. Breach of contract (if it was in writing)
+> 2. Negligence (failure to demo the correct wall despite clear instructions)
+> 3. Breach of warranty of workmanship
+>
+> Get a written estimate from the structural engineer on what it will cost to fix. That's your baseline damages. Sue for that, plus the engineer's fee, plus your diminished home value if applicable.
+>
+> The contractor's insurance should cover this under general liability. File a claim with their insurance company immediately.
+>
+> Do NOT let the contractor pay for repairs in return for dropping the claim. You need a paper trail proving damages, engineer assessment, etc.
+
+> By u/SkepticalRedditor | Score: 450 | 1 hour ago
+>
+> Wait wait wait. How did the contractor "accidentally" demo the wrong wall? Didn't he see the diagram? Didn't he ask for clarification?
+>
+> There's something missing from this story. Either:
+> a) The diagram was ambiguous
+> b) The contractor was drunk/high
+> c) The OP didn't communicate as clearly as they think
+> d) This is made up
+>
+> Not trying to be a jerk, but the level of incompetence required to demo the objectively wrong wall despite explicit instructions is... a lot.
+
+>> By u/HomeDepotNightmare [OP] | Score: 180 | 58 minutes ago
+>>
+>> I mean, I get the skepticism. Honestly, I'm questioning my own judgment.
+>>
+>> But here's what happened: I showed him the diagram that morning. The two walls in question are about 3 feet apart and run parallel. He said he understood. I said "this one [points], definitely not this one [points]." He nodded. I left.
+>>
+>> He texted me a photo mid-day showing "progress." It was the wrong wall. I called him immediately. He said "oh I think I misunderstood, let me check the diagram again."
+>>
+>> That's when I realized he'd demolished the wrong wall. When I asked why he didn't text for clarification, he didn't have a good answer.
+>>
+>> Is it my fault for trusting him to understand basic instructions? Idk. But it happened. Now I'm dealing with the fallout.
+
+>> By u/SkepticalRedditor | Score: 140 | 53 minutes ago
+>>
+>> Okay, that's actually worse than I thought. He sent you a progress photo of the WRONG WALL and you caught it immediately, but it was already demolished? Or am I misreading?
+>>
+>> If that's the case, that's gross negligence. You had clear communication failure on his part, not yours.
+
+>>> By u/HomeDepotNightmare [OP] | Score: 95 | 49 minutes ago
+>>>
+>>> Yeah. That's exactly what happened. The photo was mid-demo. By the time I called, he'd already taken out like 80% of the wall. Said he could "stop if I wanted but the wall was basically already down."
+>>>
+>>> So that's on him. Definitely on him.
+
+> By u/GContractor | Score: 320 | 1 hour ago
+>
+> I'm a GC with 15 years experience. Your contractor messed up, period. Here's what I'd do:
+>
+> 1. Get structural engineer TODAY (you know this already)
+> 2. Contact his liability insurance IMMEDIATELY. Don't wait. Call the number on his invoice or find his policy info.
+> 3. Tell your homeowner's insurance too. They might help coordinate claims.
+> 4. Get written quotes on fixing the structural issue. Get 3 quotes minimum.
+> 5. Document EVERYTHING. Photos, text messages, email the contractor a summary of what happened ("On [date], you demolished [wall] instead of [wall] as instructed, resulting in structural damage...")
+> 6. Do NOT accept cash payment from the contractor to make this go away.
+>
+> The contractor will probably try to blame you, claim miscommunication, whatever. Document that you didn't cause the error. The fact that you have a photo of him sending you the wrong wall mid-demo is huge. That's evidence.
+>
+> You'll get this fixed. It sucks, but it's fixable.
+
+> By u/Pessimist | Score: 210 | 58 minutes ago
+>
+> I'm pessimistic because I've seen this before. The contractor is probably not insured. Or his insurance is expired. Or he'll claim he was working "as an independent sub" and his GC is responsible. Or a thousand other things.
+>
+> You might end up having to sue out of pocket and it could take 2+ years to settle.
+>
+> This sucks. Get the engineer. Get everything in writing. Hire a lawyer who specializes in construction disputes. This is above Reddit's pay grade now.
+
+> By u/InternetSupport | Score: 185 | 2 hours ago
+>
+> Hey man, I know this is stressful. You're going to be okay though. This is a fixable problem. The structural engineer will give you options for reinforcement. It'll be expensive but not catastrophic.
+>
+> And the contractor absolutely owes you. You have documentation, clear instructions, a photo of the wrong wall being demolished, and structural damage. That's liability 101.
+>
+> Take a breath. Call the engineer tomorrow. You got this. 💪
+
+> By u/HomeownerHumor | Score: 165 | 1 hour ago
+>
+> EDIT: Wow, thanks for the gilding and the support. Just called a structural engineer and got an appointment for tomorrow morning at 8 AM. Will update after I know what I'm dealing with.
+>
+> In the meantime, I'm not letting anyone upstairs except the engineer. My wife is sleeping downstairs with the kids. This is... not great.
+>
+> Will keep you posted. Thanks for the reality check and the advice. Much appreciated.
+
+> By u/MemeReaction | Score: 140 | 45 minutes ago
+>
+> Plot twist: The "wrong" wall was actually the load-bearing wall and OP wanted to keep the support wall, which would have been equally catastrophic.
+>
+> Either way, RIP drywall. RIP bank account. 😂
+
+>> By u/HomeDepotNightmare [OP] | Score: 85 | 40 minutes ago
+>>
+>> lol dark but fair. Honestly at this point I'm just glad I left before he demolished the entire house.
+
+> By u/JustAddBeer | Score: 125 | 47 minutes ago
+>
+> This is why I use a big red X made of duct tape on the wall you DON'T want touched, and have the contractor literally point at the wall he's going to remove before starting.
+>
+> Just... saying. For future reference.
+>
+> (Not blaming you, OP. Contractor should have communicated better. But this is the lesson here.)
+
+---
+
+END OF THREAD

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Event registration form with multi-step validation.">
+  <title>Event Registration Form</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    .form-container {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      max-width: 500px;
+      width: 100%;
+    }
+    .form-header {
+      background: #667eea;
+      color: white;
+      padding: 30px 20px;
+      text-align: center;
+    }
+    .form-header h1 {
+      font-size: 24px;
+      margin-bottom: 5px;
+    }
+    .form-header p {
+      font-size: 14px;
+      opacity: 0.9;
+    }
+    .steps {
+      display: flex;
+      justify-content: space-around;
+      padding: 20px;
+      border-bottom: 1px solid #e0e0e0;
+      background: #f9f9f9;
+    }
+    .step {
+      flex: 1;
+      text-align: center;
+      padding: 0 10px;
+    }
+    .step-num {
+      display: inline-block;
+      width: 30px;
+      height: 30px;
+      line-height: 30px;
+      border-radius: 50%;
+      background: #ddd;
+      color: white;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    .step.active .step-num {
+      background: #667eea;
+    }
+    .step-label {
+      font-size: 12px;
+      color: #666;
+    }
+    .form-body {
+      padding: 30px;
+    }
+    fieldset {
+      border: none;
+      padding: 0;
+      margin-bottom: 25px;
+    }
+    fieldset legend {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #333;
+      padding: 0;
+    }
+    .form-group {
+      margin-bottom: 18px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #333;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    input[type="date"],
+    input[type="time"],
+    input[type="url"],
+    input[type="number"],
+    input[type="color"],
+    input[type="file"],
+    textarea,
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input:focus,
+    textarea:focus,
+    select:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      padding: 0;
+      cursor: pointer;
+    }
+    input[type="color"] {
+      width: 60px;
+      height: 40px;
+      padding: 2px;
+      cursor: pointer;
+    }
+    .input-group {
+      display: flex;
+      gap: 10px;
+    }
+    .input-group input {
+      flex: 1;
+    }
+    .checkbox-group,
+    .radio-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .checkbox-item,
+    .radio-item {
+      display: flex;
+      align-items: center;
+    }
+    input[type="checkbox"],
+    input[type="radio"] {
+      width: 18px;
+      height: 18px;
+      margin-right: 8px;
+      cursor: pointer;
+    }
+    .checkbox-item label,
+    .radio-item label {
+      margin: 0;
+      cursor: pointer;
+      font-weight: 400;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+    .help-text {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+    }
+    .error {
+      color: #e74c3c;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    input:invalid {
+      border-color: #e74c3c;
+    }
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 30px;
+    }
+    button {
+      flex: 1;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-submit {
+      background: #667eea;
+      color: white;
+    }
+    .btn-submit:hover {
+      background: #556fd9;
+    }
+    .btn-prev {
+      background: #e0e0e0;
+      color: #333;
+    }
+    .btn-prev:hover {
+      background: #d0d0d0;
+    }
+  </style>
+</head>
+<body>
+  <div class="form-container">
+    <div class="form-header">
+      <h1>Event Registration</h1>
+      <p>Complete your profile in 3 easy steps</p>
+    </div>
+
+    <div class="steps">
+      <div class="step active">
+        <div class="step-num">1</div>
+        <div class="step-label">Personal</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-label">Details</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-label">Confirm</div>
+      </div>
+    </div>
+
+    <form method="POST" action="/register" enctype="application/x-www-form-urlencoded" novalidate>
+      <div class="form-body">
+
+        <!-- Step 1: Personal Info -->
+        <fieldset>
+          <legend>Personal Information</legend>
+
+          <div class="form-group">
+            <label for="fullname">Full Name <span style="color: #e74c3c;">*</span></label>
+            <input
+              type="text"
+              id="fullname"
+              name="fullname"
+              placeholder="John David Smith"
+              required
+              minlength="3"
+              maxlength="100">
+          </div>
+
+          <div class="form-group">
+            <label for="email">Email Address <span style="color: #e74c3c;">*</span></label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              placeholder="john@example.com"
+              required>
+          </div>
+
+          <div class="form-group">
+            <label for="phone">Phone Number</label>
+            <input
+              type="tel"
+              id="phone"
+              name="phone"
+              placeholder="+1 (555) 123-4567"
+              pattern="^\+?[1-9]\d{1,14}$">
+            <div class="help-text">Optional. International format: +1 555-123-4567</div>
+          </div>
+
+          <div class="form-group">
+            <label for="website">Website / Portfolio</label>
+            <input
+              type="url"
+              id="website"
+              name="website"
+              placeholder="https://yoursite.com"
+              pattern="https?://.+">
+          </div>
+        </fieldset>
+
+        <!-- Step 2: Event Details -->
+        <fieldset>
+          <legend>Event Preferences</legend>
+
+          <div class="form-group">
+            <label for="event-date">Preferred Event Date <span style="color: #e74c3c;">*</span></label>
+            <input
+              type="date"
+              id="event-date"
+              name="event_date"
+              min="2024-05-01"
+              max="2024-12-31"
+              required>
+          </div>
+
+          <div class="form-group">
+            <label for="event-time">Preferred Time Slot <span style="color: #e74c3c;">*</span></label>
+            <input
+              type="time"
+              id="event-time"
+              name="event_time"
+              required>
+          </div>
+
+          <div class="form-group">
+            <label for="category">Event Category <span style="color: #e74c3c;">*</span></label>
+            <select id="category" name="category" required>
+              <option value="">— Select a category —</option>
+              <option value="workshop">Workshop</option>
+              <option value="conference">Conference</option>
+              <option value="networking">Networking</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="attendees">Expected Number of Attendees</label>
+            <input
+              type="number"
+              id="attendees"
+              name="attendees"
+              min="1"
+              max="5000"
+              value="1">
+          </div>
+
+          <div class="form-group">
+            <label>Dietary Restrictions</label>
+            <div class="checkbox-group">
+              <div class="checkbox-item">
+                <input type="checkbox" id="vegan" name="diet" value="vegan">
+                <label for="vegan">Vegan</label>
+              </div>
+              <div class="checkbox-item">
+                <input type="checkbox" id="vegetarian" name="diet" value="vegetarian">
+                <label for="vegetarian">Vegetarian</label>
+              </div>
+              <div class="checkbox-item">
+                <input type="checkbox" id="gluten-free" name="diet" value="gluten-free">
+                <label for="gluten-free">Gluten-Free</label>
+              </div>
+              <div class="checkbox-item">
+                <input type="checkbox" id="no-restrictions" name="diet" value="none">
+                <label for="no-restrictions">No Restrictions</label>
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- Step 3: Additional Info -->
+        <fieldset>
+          <legend>Additional Details</legend>
+
+          <div class="form-group">
+            <label>Experience Level <span style="color: #e74c3c;">*</span></label>
+            <div class="radio-group">
+              <div class="radio-item">
+                <input type="radio" id="beginner" name="level" value="beginner" required>
+                <label for="beginner">Beginner</label>
+              </div>
+              <div class="radio-item">
+                <input type="radio" id="intermediate" name="level" value="intermediate">
+                <label for="intermediate">Intermediate</label>
+              </div>
+              <div class="radio-item">
+                <input type="radio" id="advanced" name="level" value="advanced">
+                <label for="advanced">Advanced</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="interests">Interests (Datalist)</label>
+            <input
+              type="text"
+              id="interests"
+              name="interests"
+              placeholder="Type to filter..."
+              list="interest-options">
+            <datalist id="interest-options">
+              <option value="Machine Learning">
+              <option value="Web Development">
+              <option value="Cloud Computing">
+              <option value="DevOps">
+              <option value="Security">
+            </datalist>
+          </div>
+
+          <div class="form-group">
+            <label for="brand-color">Brand Color</label>
+            <input type="color" id="brand-color" name="brand_color" value="#667eea">
+          </div>
+
+          <div class="form-group">
+            <label for="bio">Bio / Additional Comments</label>
+            <textarea
+              id="bio"
+              name="bio"
+              placeholder="Tell us a bit about yourself..."
+              maxlength="500"></textarea>
+            <div class="help-text">Max 500 characters</div>
+          </div>
+
+          <div class="form-group">
+            <label for="avatar">Profile Picture</label>
+            <input
+              type="file"
+              id="avatar"
+              name="avatar"
+              accept="image/png,image/jpeg,image/webp"
+              aria-label="Upload a profile picture (PNG, JPG, or WebP)">
+            <div class="help-text">PNG, JPG, or WebP (max 5 MB)</div>
+          </div>
+
+          <div class="form-group">
+            <label for="newsletter">Notification Preference</label>
+            <input
+              type="range"
+              id="newsletter"
+              name="newsletter"
+              min="0"
+              max="10"
+              value="5"
+              aria-label="Frequency of email notifications">
+            <div class="help-text">0 = Never, 10 = Daily</div>
+          </div>
+
+          <div class="form-group">
+            <div class="checkbox-item">
+              <input type="checkbox" id="terms" name="terms" required>
+              <label for="terms">I agree to the <a href="#" style="color: #667eea;">Terms &amp; Conditions</a></label>
+            </div>
+          </div>
+
+        </fieldset>
+
+        <div class="button-group">
+          <button type="button" class="btn-prev">← Previous</button>
+          <button type="submit" class="btn-submit">Submit Registration →</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

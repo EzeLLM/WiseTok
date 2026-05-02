@@ -1,0 +1,63 @@
+SOFTWARE LICENSING AGREEMENT
+(EXCERPT)
+
+
+WHEREAS, the Company desires to license certain Software to Client for use in accordance with the terms and conditions hereof; and
+
+WHEREAS, Client desires to obtain a non-exclusive, non-transferable license to use the Software solely for Client's internal business purposes and in compliance with all applicable laws; and
+
+WHEREAS, the Company and Client wish to establish the mutual rights, obligations, and restrictions governing the use of the Software;
+
+NOW, THEREFORE, in consideration of the mutual covenants and agreements contained herein, the sufficiency of which is hereby acknowledged, the Company and Client agree as follows:
+
+1. DEFINITIONS AND INTERPRETATION
+
+1.1 In this Agreement, the following Defined Terms shall have the meanings set forth below:
+
+"Agreement" means this Software Licensing Agreement as amended from time to time.
+
+"Client" means the entity identified in the signature block hereto and includes any Permitted Users.
+
+"Confidential Information" means all non-public information disclosed by one party to the other, including but not limited to the Software, documentation, specifications, algorithms, and technical data.
+
+"Documentation" means the user manuals, technical guides, and other written materials provided by Company describing the Software's features and functionality.
+
+"Intellectual Property Rights" or "IPR" means all patents, copyrights, trademarks, trade secrets, and other intellectual property rights recognized under applicable law.
+
+"Permitted Users" means Client's employees, contractors, and agents who require access to the Software to perform their assigned duties, up to a maximum of fifty (50) individuals unless expressly authorized otherwise in Schedule A.
+
+"Software" means the proprietary software product identified as QuantumAnalytics v3.2, including all updates, patches, and maintenance releases provided during the Term.
+
+"Term" means the initial period commencing on the Effective Date and continuing for a term of one (1) year, unless earlier terminated pursuant to Section 9.
+
+2. GRANT OF LICENSE
+
+2.1 Subject to the terms and conditions of this Agreement and payment of the License Fee, Company grants to Client a non-exclusive, non-transferable, revocable license to use the Software solely for Client's internal business purposes. This license does not grant Client any right to sublicense, resell, or publicly display the Software.
+
+2.2 Client shall not: (a) reverse engineer, decompile, or disassemble the Software; (b) remove or alter any proprietary notices, labels, or marks; (c) use the Software to provide services to third parties; or (d) create derivative works based upon the Software except as expressly permitted herein.
+
+3. PAYMENT AND LICENSE FEES
+
+3.1 Client shall pay to Company the annual License Fee of Forty-Nine Thousand Nine Hundred and Ninety-Nine U.S. Dollars ($49,999.00) within thirty (30) days of invoice. Payment shall be made via wire transfer to Company's designated account.
+
+3.2 The License Fee is inclusive of support for up to fifty (50) Permitted Users. Additional users beyond this threshold shall be charged at Five Hundred and Ninety-Nine U.S. Dollars ($599.00) per user per annum.
+
+4. INDEMNIFICATION
+
+4.1 Client Indemnification. Client shall defend, indemnify, and hold harmless Company from and against all Claims, including reasonable attorneys' fees, arising out of or resulting from: (a) Client's breach of this Agreement; (b) Client's use of the Software in violation of applicable law or this Agreement; (c) Client's unauthorized modification or combination of the Software with third-party software; or (d) infringement claims resulting solely from Client's data or use case.
+
+4.2 Company Indemnification. Company shall defend, indemnify, and hold harmless Client from and against all Claims, including reasonable attorneys' fees, arising out of allegations that the unmodified Software infringes any U.S. patent, copyright, or trade secret of a third party; provided that Client: (a) promptly notifies Company in writing of the Claim; (b) grants Company sole control of the defense and settlement; and (c) provides reasonable cooperation in the defense.
+
+4.3 Procedure. The indemnified party shall provide prompt written notice of any Claim. The indemnifying party shall have the right to control the defense, provided that no settlement shall be made without the indemnified party's prior written consent, not to be unreasonably withheld.
+
+5. LIMITATION OF LIABILITY AND DISCLAIMER
+
+5.1 EXCEPT AS EXPRESSLY PROVIDED HEREIN, THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+
+5.2 IN NO EVENT SHALL EITHER PARTY BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, REGARDLESS OF THE CAUSE OF ACTION OR THE THEORY OF LIABILITY, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+5.3 TOTAL LIABILITY. EXCEPT FOR BREACHES OF CONFIDENTIALITY OBLIGATIONS OR INDEMNIFICATION OBLIGATIONS, EACH PARTY'S TOTAL LIABILITY SHALL NOT EXCEED THE LICENSE FEES PAID BY CLIENT IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE CLAIM.
+
+6. GOVERNING LAW AND JURISDICTION
+
+This Agreement shall be governed by and construed in accordance with the laws of the State of Delaware, without regard to its conflict of law principles. Each party hereby consents to the exclusive jurisdiction of the courts located in Wilmington, Delaware for resolution of any disputes arising hereunder.

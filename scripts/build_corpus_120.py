@@ -12,7 +12,7 @@ Composition target:
 Documents joined with <|endoftext|>. Each lang gets its own file so the
 WiseTok aggregation reads them in parallel.
 
-Output: /mnt/tempstorage/wisetok-120/corpus_<lang>.txt
+Output: /media/data1tb/ezellm-coder-tokenizer/corpus-v2/corpus_<lang>.txt
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-OUT_DIR = Path("/mnt/tempstorage/wisetok-120")
+OUT_DIR = Path("/media/data1tb/ezellm-coder-tokenizer/corpus-v2")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 SEP = "\n<|endoftext|>\n"
